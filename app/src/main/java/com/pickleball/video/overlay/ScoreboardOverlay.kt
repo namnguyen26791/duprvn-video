@@ -23,12 +23,15 @@ object ScoreboardOverlay {
         val leftName = if (match.courtSwapped) match.right.teamName else match.left.teamName
         val rightName = if (match.courtSwapped) match.left.teamName else match.right.teamName
         val leftServing = if (match.courtSwapped) match.serve == "right" else match.serve == "left"
-        val sScore = if (match.serve == "left") match.scoreLeft else match.scoreRight
-        val rScore = if (match.serve == "left") match.scoreRight else match.scoreLeft
         val serverHand = match.serverHand
 
-        val row1Name = if (leftServing) leftName else rightName
-        val row2Name = if (leftServing) rightName else leftName
+        // Fixed: row 1 = left team, row 2 = right team (never swap)
+        val row1Name = leftName
+        val row2Name = rightName
+        val row1Score = match.scoreLeft
+        val row2Score = match.scoreRight
+        val row1Serving = leftServing
+        val row2Serving = !leftServing
 
         val boxH = rowH * 2 + pad * 3
         val boxX = margin
@@ -43,38 +46,45 @@ object ScoreboardOverlay {
 
         val teamP = Paint().apply { color = Color.WHITE; textSize = 20f * s; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true }
         val scoreP = Paint().apply { color = Color.WHITE; textSize = 28f * s; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true; textAlign = Paint.Align.RIGHT }
-        val greenDot = Paint().apply { color = Color.parseColor("#22C55E"); style = Paint.Style.FILL; isAntiAlias = true }
         val ballP = Paint().apply { color = Color.parseColor("#FACC15"); style = Paint.Style.FILL; isAntiAlias = true }
         val divP = Paint().apply { color = Color.parseColor("#444444"); strokeWidth = 1f * s }
 
-        // ── Row 1: Serving team ──
+        // ── Row 1: Left team (fixed) ──
         val r1Y = boxY + pad + rowH * 0.7f
-        val dotR = 5f * s
-        canvas.drawCircle(boxX + pad + dotR, r1Y - 4f * s, dotR, greenDot)
-        // Team name after dot
-        val nameX = boxX + pad + dotR * 2 + 8f * s
-        canvas.drawText(row1Name, nameX, r1Y, teamP)
-        // Ball icons AFTER team name (right side of name)
-        val nameW = teamP.measureText(row1Name)
-        val ballR = 4f * s
-        val b1X = nameX + nameW + 8f * s
-        canvas.drawCircle(b1X, r1Y - 4f * s, ballR, ballP)
-        if (serverHand >= 2) {
-            canvas.drawCircle(b1X + ballR * 2.5f, r1Y - 4f * s, ballR, ballP)
+        canvas.drawText(row1Name, boxX + pad, r1Y, teamP)
+        // Ball dots on serving team
+        if (row1Serving) {
+            val nameW = teamP.measureText(row1Name)
+            val ballR = 4f * s
+            val b1X = boxX + pad + nameW + 8f * s
+            canvas.drawCircle(b1X, r1Y - 4f * s, ballR, ballP)
+            if (serverHand >= 2) {
+                canvas.drawCircle(b1X + ballR * 2.5f, r1Y - 4f * s, ballR, ballP)
+            }
         }
-        // Score right-aligned
-        canvas.drawText("$sScore", boxX + boxW - pad, r1Y, scoreP)
+        canvas.drawText("$row1Score", boxX + boxW - pad, r1Y, scoreP)
 
         // Divider
         val divY = boxY + pad + rowH + pad * 0.5f
         canvas.drawLine(boxX + pad, divY, boxX + boxW - pad, divY, divP)
 
-        // ── Row 2: Receiving team ──
+        // ── Row 2: Right team (fixed) ──
         val r2Y = divY + pad + rowH * 0.5f
         canvas.drawText(row2Name, boxX + pad, r2Y, teamP)
-        canvas.drawText("$rScore", boxX + boxW - pad, r2Y, scoreP)
+        if (row2Serving) {
+            val nameW2 = teamP.measureText(row2Name)
+            val ballR = 4f * s
+            val b2X = boxX + pad + nameW2 + 8f * s
+            canvas.drawCircle(b2X, r2Y - 4f * s, ballR, ballP)
+            if (serverHand >= 2) {
+                canvas.drawCircle(b2X + ballR * 2.5f, r2Y - 4f * s, ballR, ballP)
+            }
+        }
+        canvas.drawText("$row2Score", boxX + boxW - pad, r2Y, scoreP)
 
-        // Score summary below box
+        // Score summary below box: serving-receiving-serverNum
+        val sScore = if (leftServing) match.scoreLeft else match.scoreRight
+        val rScore = if (leftServing) match.scoreRight else match.scoreLeft
         val sumP = Paint().apply { color = Color.parseColor("#94A3B8"); textSize = 14f * s; isAntiAlias = true; typeface = Typeface.DEFAULT_BOLD }
         canvas.drawText("$sScore-$rScore-${match.serverNum}", boxX + pad, boxY + boxH + 16f * s, sumP)
 

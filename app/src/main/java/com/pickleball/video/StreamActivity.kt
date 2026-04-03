@@ -8,6 +8,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.pedro.rtplibrary.view.OpenGlView
+import okhttp3.MediaType.Companion.toMediaType
 import com.pickleball.video.data.FirebaseMatchListener
 import com.pickleball.video.stream.StreamManager
 import kotlinx.coroutines.flow.collectLatest
@@ -25,6 +26,8 @@ class StreamActivity : AppCompatActivity() {
     private var courtName = ""
     private var rtmpUrl = ""
     private var streamKey = ""
+    private var apiBase = ""
+    private var tournamentId = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -38,6 +41,8 @@ class StreamActivity : AppCompatActivity() {
         courtName = intent.getStringExtra("court_name") ?: "Sân"
         rtmpUrl = intent.getStringExtra("rtmp_url") ?: ""
         streamKey = intent.getStringExtra("stream_key") ?: ""
+        apiBase = intent.getStringExtra("api_base") ?: ""
+        tournamentId = intent.getIntExtra("tournament_id", 0)
 
         val root = FrameLayout(this)
         root.setBackgroundColor(Color.BLACK)
@@ -73,6 +78,24 @@ class StreamActivity : AppCompatActivity() {
                 streamManager?.startPreview()
                 if (rtmpUrl.isNotBlank() && streamKey.isNotBlank()) {
                     streamManager?.startStream(rtmpUrl, streamKey)
+                    // Report broadcast start to backend
+                    if (apiBase.isNotBlank() && tournamentId > 0) {
+                        lifecycleScope.launch {
+                            try {
+                                val api = com.pickleball.video.data.ApiService.create(apiBase)
+                                // Simple POST via OkHttp
+                                val client = okhttp3.OkHttpClient()
+                                val body = okhttp3.RequestBody.create(
+                                    "application/json".toMediaType(),
+                                    """{"court_name":"$courtName"}"""
+                                )
+                                val req = okhttp3.Request.Builder()
+                                    .url("$apiBase/public/tournaments/$tournamentId/stream-started")
+                                    .post(body).build()
+                                client.newCall(req).execute()
+                            } catch (_: Exception) {}
+                        }
+                    }
                 } else {
                     statusText.text = "⚠️ Chưa có RTMP — chỉ preview"
                 }
