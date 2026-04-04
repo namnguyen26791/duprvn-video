@@ -99,18 +99,21 @@ class StreamActivity : AppCompatActivity() {
 
     private fun reportStreamStarted() {
         if (apiBase.isBlank() || tournamentId <= 0) return
-        lifecycleScope.launch {
+        val url = "$apiBase/public/tournaments/$tournamentId/stream-started"
+        android.util.Log.d("PB_VIDEO", "reportStreamStarted: calling $url court=$courtName")
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val client = okhttp3.OkHttpClient()
                 val body = okhttp3.RequestBody.create(
                     "application/json".toMediaType(),
                     """{"court_name":"$courtName"}"""
                 )
-                val req = okhttp3.Request.Builder()
-                    .url("$apiBase/public/tournaments/$tournamentId/stream-started")
-                    .post(body).build()
-                client.newCall(req).execute()
-            } catch (_: Exception) {}
+                val req = okhttp3.Request.Builder().url(url).post(body).build()
+                val res = client.newCall(req).execute()
+                android.util.Log.d("PB_VIDEO", "reportStreamStarted: ${res.code}")
+            } catch (e: Exception) {
+                android.util.Log.e("PB_VIDEO", "reportStreamStarted failed: ${e.javaClass.simpleName}: ${e.message}")
+            }
         }
     }
 
