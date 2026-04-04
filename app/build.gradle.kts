@@ -16,7 +16,7 @@ android {
         versionName = "1.0"
 
         // Firebase + API config from build
-        buildConfigField("String", "API_BASE", "\"http://192.168.1.5:8000/api\"")
+        buildConfigField("String", "API_BASE", "\"https://api.pickbase.asia/api\"")
         buildConfigField("String", "FIREBASE_DB_URL", "\"https://vdpr-45c0e-default-rtdb.asia-southeast1.firebasedatabase.app\"")
     }
 
