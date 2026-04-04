@@ -23,7 +23,7 @@ object ScoreboardOverlay {
         val leftName = if (match.courtSwapped) match.right.teamName else match.left.teamName
         val rightName = if (match.courtSwapped) match.left.teamName else match.right.teamName
         val leftServing = if (match.courtSwapped) match.serve == "right" else match.serve == "left"
-        val serverHand = match.serverHand
+        val serverNum = match.serverNum // 1 or 2 — server number in pickleball
 
         // Fixed: row 1 = left team, row 2 = right team (never swap)
         val row1Name = leftName
@@ -58,7 +58,7 @@ object ScoreboardOverlay {
             val ballR = 4f * s
             val b1X = boxX + pad + nameW + 8f * s
             canvas.drawCircle(b1X, r1Y - 4f * s, ballR, ballP)
-            if (serverHand >= 2) {
+            if (serverNum >= 2) {
                 canvas.drawCircle(b1X + ballR * 2.5f, r1Y - 4f * s, ballR, ballP)
             }
         }
@@ -76,7 +76,7 @@ object ScoreboardOverlay {
             val ballR = 4f * s
             val b2X = boxX + pad + nameW2 + 8f * s
             canvas.drawCircle(b2X, r2Y - 4f * s, ballR, ballP)
-            if (serverHand >= 2) {
+            if (serverNum >= 2) {
                 canvas.drawCircle(b2X + ballR * 2.5f, r2Y - 4f * s, ballR, ballP)
             }
         }

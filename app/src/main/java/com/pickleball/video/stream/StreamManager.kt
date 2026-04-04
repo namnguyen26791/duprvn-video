@@ -24,7 +24,6 @@ class StreamManager(
     var courtName: String = ""; private set
     private val handler = Handler(Looper.getMainLooper())
     private var overlayRunnable: Runnable? = null
-    private var lastHash = 0
     private var filterReady = false
 
     fun init(courtName: String) {
@@ -51,13 +50,14 @@ class StreamManager(
     }
 
     private fun refreshOverlay() {
-        if (!filterReady) return
+        if (!filterReady) {
+            android.util.Log.w("PB_VIDEO", "refreshOverlay: filter not ready")
+            return
+        }
         val m = currentMatch
-        val hash = m.hashCode() + courtName.hashCode()
-        if (hash == lastHash) return
-        lastHash = hash
+        android.util.Log.d("PB_VIDEO", "refreshOverlay: match=${m?.left?.teamName} vs ${m?.right?.teamName}, score=${m?.scoreLeft}-${m?.scoreRight}")
 
-        val w = 1280; val h = 720 // full resolution for sharp text
+        val w = 1280; val h = 720
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
         canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
@@ -67,7 +67,9 @@ class StreamManager(
         }
         try {
             imageFilter?.setImage(bmp)
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            android.util.Log.e("PB_VIDEO", "setImage failed: ${e.message}")
+        }
     }
 
     fun startStream(rtmpUrl: String, streamKey: String) {
@@ -89,14 +91,19 @@ class StreamManager(
     fun startPreview() {
         rtmpCamera?.startPreview()
         // Setup filter after preview starts (GL context ready)
-        handler.postDelayed({ setupFilter(); refreshOverlay() }, 1000)
+        handler.postDelayed({
+            setupFilter()
+            refreshOverlay()
+            // Start overlay loop even without streaming
+            if (overlayRunnable == null) startOverlayLoop()
+        }, 1000)
     }
 
     private fun startOverlayLoop() {
         overlayRunnable = object : Runnable {
             override fun run() {
                 refreshOverlay()
-                handler.postDelayed(this, 500)
+                handler.postDelayed(this, 200)
             }
         }
         handler.post(overlayRunnable!!)

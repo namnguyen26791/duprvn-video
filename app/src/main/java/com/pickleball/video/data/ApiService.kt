@@ -14,6 +14,7 @@ data class CourtStreamConfig(
     val rtmp_url: String?,
     val stream_key: String?,
     val youtube_video_id: String?,
+    val stopped: Boolean? = false,
 )
 
 data class TournamentListItem(

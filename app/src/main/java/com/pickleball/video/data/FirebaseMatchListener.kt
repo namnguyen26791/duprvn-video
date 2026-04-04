@@ -6,76 +6,66 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 
 /**
- * Listen to all live matches on Firebase and find the one playing on our court.
- * Checks both "matches/" (bracket) and "group_matches/" (group) paths.
+ * Listen to live matches on Firebase filtered by court + tournament.
  */
 object FirebaseMatchListener {
 
     private val db = FirebaseDatabase.getInstance()
 
-    fun observeCourtMatch(courtName: String): Flow<MatchState?> = callbackFlow {
-        var currentMatch: MatchState? = null
-
+    fun observeCourtMatch(courtName: String, tournamentId: Int = 0): Flow<MatchState?> = callbackFlow {
         val bracketRef = db.getReference("matches")
         val groupRef = db.getReference("group_matches")
 
-        val listener = object : ValueEventListener {
-            override fun onDataChange(snapshot: DataSnapshot) {
-                val found = findMatchForCourt(snapshot, courtName)
-                // Also check the other path
-                currentMatch = found
-                trySend(currentMatch)
-            }
-            override fun onCancelled(error: DatabaseError) {}
-        }
-
         val bracketListener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
-                val found = findMatchForCourt(snapshot, courtName)
+                val found = findMatch(snapshot, courtName, tournamentId)
                 if (found != null) {
-                    currentMatch = found
-                    trySend(currentMatch)
+                    trySend(found)
                 } else {
-                    // Check group matches too
                     groupRef.addListenerForSingleValueEvent(object : ValueEventListener {
-                        override fun onDataChange(groupSnap: DataSnapshot) {
-                            currentMatch = findMatchForCourt(groupSnap, courtName)
-                            trySend(currentMatch)
+                        override fun onDataChange(gs: DataSnapshot) {
+                            trySend(findMatch(gs, courtName, tournamentId))
                         }
-                        override fun onCancelled(error: DatabaseError) {}
+                        override fun onCancelled(e: DatabaseError) {}
                     })
                 }
             }
-            override fun onCancelled(error: DatabaseError) {}
+            override fun onCancelled(e: DatabaseError) {}
         }
 
         val groupListener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
-                val found = findMatchForCourt(snapshot, courtName)
-                if (found != null) {
-                    currentMatch = found
-                    trySend(currentMatch)
-                }
+                val found = findMatch(snapshot, courtName, tournamentId)
+                if (found != null) trySend(found)
             }
-            override fun onCancelled(error: DatabaseError) {}
+            override fun onCancelled(e: DatabaseError) {}
         }
 
         bracketRef.addValueEventListener(bracketListener)
         groupRef.addValueEventListener(groupListener)
-
         awaitClose {
             bracketRef.removeEventListener(bracketListener)
             groupRef.removeEventListener(groupListener)
         }
     }
 
-    private fun findMatchForCourt(snapshot: DataSnapshot, courtName: String): MatchState? {
+    private fun findMatch(snapshot: DataSnapshot, courtName: String, tournamentId: Int): MatchState? {
+        val now = System.currentTimeMillis()
+        android.util.Log.d("PB_VIDEO", "findMatch: looking for court='$courtName' tid=$tournamentId, children=${snapshot.childrenCount}")
         for (child in snapshot.children) {
             val court = child.child("court").getValue(String::class.java) ?: continue
             val status = child.child("status").getValue(String::class.java) ?: continue
-            if (court == courtName && status == "playing") {
-                return parseMatch(child)
-            }
+            val updatedAt = child.child("updatedAt").getValue(Long::class.java) ?: 0L
+            val tid = child.child("tournamentId").getValue(Int::class.java) ?: 0
+            android.util.Log.d("PB_VIDEO", "  child=${child.key}: court='$court' status='$status' tid=$tid updatedAt=$updatedAt age=${(now-updatedAt)/1000}s")
+
+            if (court != courtName) continue
+            if (status != "playing") continue
+            if ((now - updatedAt) > 7200000) continue
+            if (tournamentId > 0 && tid > 0 && tid != tournamentId) continue
+
+            android.util.Log.d("PB_VIDEO", "  → MATCHED!")
+            return parseMatch(child)
         }
         return null
     }
