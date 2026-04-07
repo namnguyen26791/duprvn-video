@@ -10,7 +10,6 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.pedro.rtplibrary.view.OpenGlView
-import okhttp3.MediaType.Companion.toMediaType
 import com.pickleball.video.data.ApiService
 import com.pickleball.video.data.FirebaseMatchListener
 import com.pickleball.video.stream.StreamManager
@@ -23,12 +22,13 @@ class StreamActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private var streamManager: StreamManager? = null
     private var courtName = ""
-    private var rtmpUrl = ""
-    private var streamKey = ""
+    private var matchId = 0
+    private var matchType = "bracket"
     private var apiBase = ""
     private var tournamentId = 0
     private val handler = Handler(Looper.getMainLooper())
     private var configCheckRunnable: Runnable? = null
+    private var isStreaming = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,11 +39,11 @@ class StreamActivity : AppCompatActivity() {
             WindowManager.LayoutParams.FLAG_FULLSCREEN
         )
 
-        courtName = intent.getStringExtra("court_name") ?: "Sân"
-        rtmpUrl = intent.getStringExtra("rtmp_url") ?: ""
-        streamKey = intent.getStringExtra("stream_key") ?: ""
+        matchId = intent.getIntExtra("match_id", 0)
+        matchType = intent.getStringExtra("match_type") ?: "bracket"
         apiBase = intent.getStringExtra("api_base") ?: ""
         tournamentId = intent.getIntExtra("tournament_id", 0)
+        courtName = intent.getStringExtra("court_name") ?: "Sân"
 
         val root = FrameLayout(this)
         root.setBackgroundColor(Color.BLACK)
@@ -75,44 +75,18 @@ class StreamActivity : AppCompatActivity() {
         openGlView.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 streamManager?.startPreview()
-                if (rtmpUrl.isNotBlank() && streamKey.isNotBlank()) {
-                    streamManager?.startStream(rtmpUrl, streamKey)
-                    reportStreamStarted()
-                } else {
-                    statusText.text = "⚠️ Chưa có RTMP — chỉ preview"
-                }
+                // Don't start stream immediately — wait for polling to get config
+                statusText.text = "Đang chờ cấu hình..."
+                startConfigCheck()
             }
             override fun surfaceChanged(h: SurfaceHolder, f: Int, w: Int, ht: Int) {}
             override fun surfaceDestroyed(holder: SurfaceHolder) { streamManager?.release() }
         })
 
-        // Listen Firebase for match on this court
+        // Listen Firebase for match on this court (scoreboard overlay)
         lifecycleScope.launch {
             FirebaseMatchListener.observeCourtMatch(courtName, tournamentId).collectLatest { match ->
                 streamManager?.updateMatch(match)
-            }
-        }
-
-        // Poll stream config every 10s — if court removed, stop and go back
-        startConfigCheck()
-    }
-
-    private fun reportStreamStarted() {
-        if (apiBase.isBlank() || tournamentId <= 0) return
-        val url = "$apiBase/public/tournaments/$tournamentId/stream-started"
-        android.util.Log.d("PB_VIDEO", "reportStreamStarted: calling $url court=$courtName")
-        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            try {
-                val client = okhttp3.OkHttpClient()
-                val body = okhttp3.RequestBody.create(
-                    "application/json".toMediaType(),
-                    """{"court_name":"$courtName"}"""
-                )
-                val req = okhttp3.Request.Builder().url(url).post(body).build()
-                val res = client.newCall(req).execute()
-                android.util.Log.d("PB_VIDEO", "reportStreamStarted: ${res.code}")
-            } catch (e: Exception) {
-                android.util.Log.e("PB_VIDEO", "reportStreamStarted failed: ${e.javaClass.simpleName}: ${e.message}")
             }
         }
     }
@@ -123,22 +97,39 @@ class StreamActivity : AppCompatActivity() {
                 lifecycleScope.launch {
                     try {
                         val api = ApiService.create(apiBase)
-                        val config = api.getStreamConfig(tournamentId)
-                        val courtCfg = config.stream_config[courtName]
-                        if (courtCfg == null || courtCfg.rtmp_url.isNullOrBlank() || courtCfg.stopped == true) {
-                            // Court config removed — stop stream and go back
+                        val config = api.getMatchStreamConfig(matchId, matchType)
+
+                        // If stream_ended_at is set → stop stream and finish
+                        if (!config.stream_ended_at.isNullOrBlank()) {
                             runOnUiThread {
                                 streamManager?.release()
                                 finish()
                             }
                             return@launch
                         }
-                    } catch (_: Exception) {}
+
+                        // If rtmp_url + stream_key available and not currently streaming → start
+                        if (!config.rtmp_url.isNullOrBlank() && !config.stream_key.isNullOrBlank() && !isStreaming) {
+                            isStreaming = true
+                            runOnUiThread {
+                                streamManager?.startStream(config.rtmp_url, config.stream_key)
+                            }
+                        } else if (config.rtmp_url.isNullOrBlank() || config.stream_key.isNullOrBlank()) {
+                            runOnUiThread {
+                                statusText.text = "Đang chờ cấu hình..."
+                            }
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.e("PB_VIDEO", "configCheck failed: ${e.message}")
+                        runOnUiThread {
+                            statusText.text = "⚠️ Mất kết nối..."
+                        }
+                    }
                 }
-                handler.postDelayed(this, 10000) // check every 10s
+                handler.postDelayed(this, 5000) // poll every 5s
             }
         }
-        handler.postDelayed(configCheckRunnable!!, 10000)
+        handler.post(configCheckRunnable!!)
     }
 
     override fun onDestroy() {

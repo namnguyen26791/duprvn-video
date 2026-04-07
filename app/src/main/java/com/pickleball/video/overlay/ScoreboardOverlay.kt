@@ -88,16 +88,23 @@ object ScoreboardOverlay {
         val sumP = Paint().apply { color = Color.parseColor("#94A3B8"); textSize = 14f * s; isAntiAlias = true; typeface = Typeface.DEFAULT_BOLD }
         canvas.drawText("$sScore-$rScore-${match.serverNum}", boxX + pad, boxY + boxH + 16f * s, sumP)
 
-        // Tournament name at TOP-LEFT
-        if (!match.tournamentName.isNullOrEmpty()) {
+        // Tournament name + Round name at TOP-LEFT
+        val topLabel = buildString {
+            if (!match.tournamentName.isNullOrEmpty()) append(match.tournamentName)
+            if (!match.roundName.isNullOrEmpty()) {
+                if (isNotEmpty()) append(" · ")
+                append(match.roundName)
+            }
+        }
+        if (topLabel.isNotEmpty()) {
             val topBg = Paint().apply { color = Color.parseColor("#AA000000"); style = Paint.Style.FILL; isAntiAlias = true }
             val topBorder = Paint().apply { color = Color.parseColor("#22C55E"); style = Paint.Style.STROKE; strokeWidth = 1.5f * s; isAntiAlias = true }
             val topText = Paint().apply { color = Color.WHITE; textSize = 18f * s; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true }
-            val tw = topText.measureText(match.tournamentName) + pad * 4
+            val tw = topText.measureText(topLabel) + pad * 4
             val topRect = RectF(margin, margin, margin + tw, margin + 28f * s)
             canvas.drawRoundRect(topRect, cornerR, cornerR, topBg)
             canvas.drawRoundRect(topRect, cornerR, cornerR, topBorder)
-            canvas.drawText(match.tournamentName, margin + pad * 2, margin + 20f * s, topText)
+            canvas.drawText(topLabel, margin + pad * 2, margin + 20f * s, topText)
         }
     }
 

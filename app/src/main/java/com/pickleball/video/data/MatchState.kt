@@ -20,6 +20,7 @@ data class MatchState(
     val court: String? = null,
     val tournamentId: Int? = null,
     val tournamentName: String? = null,
+    val roundName: String? = null,
     val paused: Boolean = false,
     val status: String = "",
 )
