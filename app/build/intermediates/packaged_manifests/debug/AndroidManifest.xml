@@ -34,7 +34,7 @@
         android:debuggable="true"
         android:extractNativeLibs="false"
         android:keepScreenOn="true"
-        android:label="PB Video"
+        android:label="PickBase Live"
         android:supportsRtl="true"
         android:theme="@style/Theme.AppCompat.DayNight.NoActionBar" >
 

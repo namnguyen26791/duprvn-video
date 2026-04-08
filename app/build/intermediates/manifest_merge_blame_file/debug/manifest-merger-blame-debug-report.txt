@@ -60,7 +60,7 @@
 35        android:extractNativeLibs="false"
 36        android:keepScreenOn="true"
 36-->C:\Users\nam.nguyen19\Documents\prj\app\Video\app\src\main\AndroidManifest.xml:19:9-36
-37        android:label="PB Video"
+37        android:label="PickBase Live"
 37-->C:\Users\nam.nguyen19\Documents\prj\app\Video\app\src\main\AndroidManifest.xml:16:9-33
 38        android:supportsRtl="true"
 38-->C:\Users\nam.nguyen19\Documents\prj\app\Video\app\src\main\AndroidManifest.xml:17:9-35

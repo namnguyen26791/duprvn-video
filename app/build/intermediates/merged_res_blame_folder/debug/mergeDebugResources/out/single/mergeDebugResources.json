@@ -1,6 +1,14 @@
 [
     {
-        "merged": "com.pickleball.video.app-debug-56:/xml_network_security_config.xml.flat",
-        "source": "com.pickleball.video.app-main-58:/xml/network_security_config.xml"
+        "merged": "C:\\Users\\nam.nguyen19\\.gradle\\daemon\\8.9\\com.pickleball.video.app-debug-56:\\xml_network_security_config.xml.flat",
+        "source": "C:\\Users\\nam.nguyen19\\.gradle\\daemon\\8.9\\com.pickleball.video.app-main-58:\\xml\\network_security_config.xml"
+    },
+    {
+        "merged": "com.pickleball.video.app-debug-56:/drawable_logo.png.flat",
+        "source": "com.pickleball.video.app-main-58:/drawable/logo.png"
+    },
+    {
+        "merged": "C:\\Users\\nam.nguyen19\\.gradle\\daemon\\8.9\\com.pickleball.video.app-debug-56:\\drawable_logo.png.flat",
+        "source": "C:\\Users\\nam.nguyen19\\.gradle\\daemon\\8.9\\com.pickleball.video.app-main-58:\\drawable\\logo.png"
     }
 ]

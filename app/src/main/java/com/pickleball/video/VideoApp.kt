@@ -17,6 +17,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.painterResource
+import androidx.compose.foundation.Image
 import com.pickleball.video.data.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -78,7 +80,12 @@ fun VideoApp() {
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text("🏓 Pickleball Video", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                Image(
+                    painter = painterResource(id = R.drawable.logo),
+                    contentDescription = "PickBase",
+                    modifier = Modifier.size(64.dp)
+                )
+                Text("PickBase Live", fontSize = 20.sp, fontWeight = FontWeight.Bold)
 
                 when (step) {
                     0 -> {
