@@ -28,6 +28,7 @@ fun VideoApp() {
     var apiBase by remember { mutableStateOf(BuildConfig.API_BASE) }
     var step by remember { mutableIntStateOf(0) }
     var tournaments by remember { mutableStateOf<List<TournamentListItem>>(emptyList()) }
+    var tournamentSearch by remember { mutableStateOf("") }
     var selectedTournament by remember { mutableStateOf<TournamentListItem?>(null) }
     var streamConfig by remember { mutableStateOf<StreamConfigResponse?>(null) }
     var selectedCourt by remember { mutableStateOf<String?>(null) }
@@ -49,8 +50,12 @@ fun VideoApp() {
                 val matches = ApiService.create(apiBase).getCourtMatches(tid, court)
                 courtMatches = matches
 
-                // Auto-launch: find playing match with rtmp_url that we haven't launched yet
-                val playing = matches.firstOrNull { it.status == "playing" && !it.rtmp_url.isNullOrBlank() }
+                // Auto-launch: find match that is live (stream_started_at set, not ended, has rtmp)
+                val playing = matches.firstOrNull {
+                    !it.stream_started_at.isNullOrBlank() &&
+                    it.stream_ended_at.isNullOrBlank() &&
+                    !it.rtmp_url.isNullOrBlank()
+                }
                 if (playing != null && autoLaunched != playing.id) {
                     autoLaunched = playing.id
                     val intent = Intent(context, StreamActivity::class.java).apply {
@@ -118,14 +123,24 @@ fun VideoApp() {
 
                     1 -> {
                         Text("Chọn giải đấu", fontSize = 14.sp, color = Color.Gray)
-                        if (tournaments.isEmpty()) {
-                            Text("Không có giải đấu nào", color = Color.Gray, fontSize = 13.sp)
+                        OutlinedTextField(
+                            value = tournamentSearch,
+                            onValueChange = { tournamentSearch = it },
+                            label = { Text("Tìm giải...") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                        )
+                        val filtered = tournaments.filter {
+                            tournamentSearch.isBlank() || it.name.contains(tournamentSearch, ignoreCase = true)
+                        }
+                        if (filtered.isEmpty()) {
+                            Text("Không tìm thấy giải nào", color = Color.Gray, fontSize = 13.sp)
                         } else {
                             LazyColumn(
                                 modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
-                                items(tournaments) { t ->
+                                items(filtered) { t ->
                                     Card(
                                         modifier = Modifier.fillMaxWidth().clickable {
                                             selectedTournament = t; loading = true; error = null
@@ -146,7 +161,7 @@ fun VideoApp() {
                         }
                         if (error != null) Text(error!!, color = Color.Red, fontSize = 12.sp)
                         if (loading) CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                        TextButton(onClick = { step = 0 }) { Text("← Quay lại") }
+                        TextButton(onClick = { step = 0; tournamentSearch = "" }) { Text("← Quay lại") }
                     }
 
                     2 -> {
@@ -203,14 +218,16 @@ fun VideoApp() {
                             ) {
                                 items(courtMatches) { m ->
                                     val statusLabel = when {
-                                        m.status == "playing" && !m.rtmp_url.isNullOrBlank() -> "🔴 LIVE"
-                                        m.status == "playing" -> "⏳ Đang đấu"
+                                        !m.stream_started_at.isNullOrBlank() && m.stream_ended_at.isNullOrBlank() -> "🔴 LIVE"
+                                        !m.stream_ended_at.isNullOrBlank() -> "✅ Kết thúc"
+                                        !m.rtmp_url.isNullOrBlank() -> "⏳ Chờ live"
                                         !m.youtube_video_id.isNullOrBlank() -> "📹 Broadcast sẵn"
                                         else -> "○ Chờ"
                                     }
                                     val statusColor = when {
-                                        m.status == "playing" -> Color(0xFFDC2626)
-                                        !m.youtube_video_id.isNullOrBlank() -> Color(0xFF16A34A)
+                                        !m.stream_started_at.isNullOrBlank() && m.stream_ended_at.isNullOrBlank() -> Color(0xFFDC2626)
+                                        !m.stream_ended_at.isNullOrBlank() -> Color(0xFF16A34A)
+                                        !m.rtmp_url.isNullOrBlank() -> Color(0xFFEAB308)
                                         else -> Color(0xFF94A3B8)
                                     }
                                     Card(shape = RoundedCornerShape(8.dp)) {
