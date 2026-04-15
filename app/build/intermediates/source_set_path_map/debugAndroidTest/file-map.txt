@@ -1,4 +1,0 @@
-com.pickleball.video.test.app-androidTest-0 C:\Users\nam.nguyen19\Documents\prj\app\Video\app\build\generated\res\resValues\androidTest\debug
-com.pickleball.video.test.app-mergeDebugAndroidTestResources-1 C:\Users\nam.nguyen19\Documents\prj\app\Video\app\build\intermediates\incremental\debugAndroidTest\mergeDebugAndroidTestResources\merged.dir
-com.pickleball.video.test.app-mergeDebugAndroidTestResources-2 C:\Users\nam.nguyen19\Documents\prj\app\Video\app\build\intermediates\incremental\debugAndroidTest\mergeDebugAndroidTestResources\stripped.dir
-com.pickleball.video.test.app-merged_res-3 C:\Users\nam.nguyen19\Documents\prj\app\Video\app\build\intermediates\merged_res\debugAndroidTest

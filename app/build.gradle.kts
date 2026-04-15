@@ -5,15 +5,15 @@ plugins {
 }
 
 android {
-    namespace = "com.pickleball.video"
+    namespace = "asia.pickbase.video"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.pickleball.video"
+        applicationId = "asia.pickbase.video"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.0.1"
 
         // Firebase + API config from build
         buildConfigField("String", "API_BASE", "\"https://api.pickbase.asia/api\"")

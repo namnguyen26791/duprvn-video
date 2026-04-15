@@ -1,4 +1,4 @@
-package com.pickleball.video.data
+package asia.pickbase.video.data
 
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
@@ -83,3 +83,4 @@ interface ApiService {
         }
     }
 }
+

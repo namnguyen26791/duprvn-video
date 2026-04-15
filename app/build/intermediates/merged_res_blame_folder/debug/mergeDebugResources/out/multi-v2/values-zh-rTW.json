@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.pickleball.video.app-mergeDebugResources-54:/values-zh-rTW/values-zh-rTW.xml",
+            "outputFile": "asia.pickbase.video.app-mergeDebugResources-54:/values-zh-rTW/values-zh-rTW.xml",
             "map": [
                 {
                     "source": "C:\\Users\\nam.nguyen19\\.gradle\\caches\\8.9\\transforms\\d087349472ba5c9a2377a114cffa66d3\\transformed\\core-1.13.0\\res\\values-zh-rTW\\values-zh-rTW.xml",

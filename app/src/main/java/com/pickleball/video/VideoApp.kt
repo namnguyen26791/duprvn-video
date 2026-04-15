@@ -1,4 +1,4 @@
-package com.pickleball.video
+package asia.pickbase.video
 
 import android.content.Intent
 import androidx.compose.foundation.background
@@ -19,7 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.Image
-import com.pickleball.video.data.*
+import asia.pickbase.video.data.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -261,3 +261,4 @@ fun VideoApp() {
         }
     }
 }
+

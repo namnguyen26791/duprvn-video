@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.pickleball.video.app-mergeDebugResources-54:/values-es/values-es.xml",
+            "outputFile": "asia.pickbase.video.app-mergeDebugResources-54:/values-es/values-es.xml",
             "map": [
                 {
                     "source": "C:\\Users\\nam.nguyen19\\.gradle\\caches\\8.9\\transforms\\c01fc7efd781ffbdd9153b44170d65ca\\transformed\\jetified-foundation-release\\res\\values-es\\values-es.xml",

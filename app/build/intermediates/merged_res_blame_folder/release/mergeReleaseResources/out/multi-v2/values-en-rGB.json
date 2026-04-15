@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.pickleball.video.app-mergeReleaseResources-54:/values-en-rGB/values-en-rGB.xml",
+            "outputFile": "asia.pickbase.video.app-mergeReleaseResources-54:/values-en-rGB/values-en-rGB.xml",
             "map": [
                 {
                     "source": "C:\\Users\\nam.nguyen19\\.gradle\\caches\\8.9\\transforms\\c01fc7efd781ffbdd9153b44170d65ca\\transformed\\jetified-foundation-release\\res\\values-en-rGB\\values-en-rGB.xml",

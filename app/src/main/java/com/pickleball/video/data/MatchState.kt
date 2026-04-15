@@ -1,4 +1,4 @@
-package com.pickleball.video.data
+package asia.pickbase.video.data
 
 /** Match state from Firebase — mirrors what Referee app writes */
 data class TeamSide(
@@ -30,3 +30,4 @@ data class StreamConfig(
     val streamKey: String = "",
     val youtubeVideoId: String = "",
 )
+

@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.pickleball.video.app-mergeDebugResources-54:/values-v26/values-v26.xml",
+            "outputFile": "asia.pickbase.video.app-mergeDebugResources-54:/values-v26/values-v26.xml",
             "map": [
                 {
                     "source": "C:\\Users\\nam.nguyen19\\.gradle\\caches\\8.9\\transforms\\99b230913cf0c5e854e2c11c1fe38a59\\transformed\\appcompat-1.6.1\\res\\values-v26\\values-v26.xml",

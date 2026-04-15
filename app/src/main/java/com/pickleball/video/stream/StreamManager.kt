@@ -1,4 +1,4 @@
-package com.pickleball.video.stream
+package asia.pickbase.video.stream
 
 import android.content.Context
 import android.graphics.*
@@ -9,8 +9,8 @@ import com.pedro.encoder.utils.gl.TranslateTo
 import com.pedro.rtmp.utils.ConnectCheckerRtmp
 import com.pedro.rtplibrary.rtmp.RtmpCamera2
 import com.pedro.rtplibrary.view.OpenGlView
-import com.pickleball.video.data.MatchState
-import com.pickleball.video.overlay.ScoreboardOverlay
+import asia.pickbase.video.data.MatchState
+import asia.pickbase.video.overlay.ScoreboardOverlay
 
 class StreamManager(
     private val context: Context,
@@ -129,3 +129,4 @@ class StreamManager(
     override fun onAuthErrorRtmp() { onStatusChange("❌ Auth error") }
     override fun onAuthSuccessRtmp() {}
 }
+

@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.pickleball.video"
-    android:versionCode="1"
-    android:versionName="1.0" >
+    package="asia.pickbase.video"
+    android:versionCode="2"
+    android:versionName="1.0.1" >
 
     <uses-sdk
         android:minSdkVersion="26"
-        android:targetSdkVersion="34" />
+        android:targetSdkVersion="35" />
 
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -22,13 +22,13 @@
         android:required="false" />
 
     <permission
-        android:name="com.pickleball.video.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+        android:name="asia.pickbase.video.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
         android:protectionLevel="signature" />
 
-    <uses-permission android:name="com.pickleball.video.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+    <uses-permission android:name="asia.pickbase.video.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
 
     <application
-        android:name="com.pickleball.video.App"
+        android:name="asia.pickbase.video.App"
         android:allowBackup="true"
         android:appComponentFactory="androidx.core.app.CoreComponentFactory"
         android:debuggable="true"
@@ -44,7 +44,7 @@
 
         <!-- Setup screen (portrait) -->
         <activity
-            android:name="com.pickleball.video.MainActivity"
+            android:name="asia.pickbase.video.MainActivity"
             android:exported="true"
             android:screenOrientation="portrait" >
             <intent-filter>
@@ -56,7 +56,7 @@
 
         <!-- Streaming screen (landscape, fullscreen) -->
         <activity
-            android:name="com.pickleball.video.StreamActivity"
+            android:name="asia.pickbase.video.StreamActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="false"
             android:keepScreenOn="true"
@@ -86,7 +86,7 @@
 
         <provider
             android:name="com.google.firebase.provider.FirebaseInitProvider"
-            android:authorities="com.pickleball.video.firebaseinitprovider"
+            android:authorities="asia.pickbase.video.firebaseinitprovider"
             android:directBootAware="true"
             android:exported="false"
             android:initOrder="100" />
@@ -98,7 +98,7 @@
 
         <provider
             android:name="androidx.startup.InitializationProvider"
-            android:authorities="com.pickleball.video.androidx-startup"
+            android:authorities="asia.pickbase.video.androidx-startup"
             android:exported="false" >
             <meta-data
                 android:name="androidx.emoji2.text.EmojiCompatInitializer"

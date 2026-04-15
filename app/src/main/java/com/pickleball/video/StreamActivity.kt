@@ -1,4 +1,4 @@
-package com.pickleball.video
+package asia.pickbase.video
 
 import android.graphics.Color
 import android.os.Bundle
@@ -10,9 +10,9 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.pedro.rtplibrary.view.OpenGlView
-import com.pickleball.video.data.ApiService
-import com.pickleball.video.data.FirebaseMatchListener
-import com.pickleball.video.stream.StreamManager
+import asia.pickbase.video.data.ApiService
+import asia.pickbase.video.data.FirebaseMatchListener
+import asia.pickbase.video.stream.StreamManager
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -138,3 +138,4 @@ class StreamActivity : AppCompatActivity() {
         streamManager?.release()
     }
 }
+

@@ -1,7 +1,7 @@
-package com.pickleball.video.overlay
+package asia.pickbase.video.overlay
 
 import android.graphics.*
-import com.pickleball.video.data.MatchState
+import asia.pickbase.video.data.MatchState
 
 /**
  * Scoreboard: bottom-left, 2 rows with border.
@@ -117,3 +117,4 @@ object ScoreboardOverlay {
         canvas.drawText("TAM DUNG", width / 2f, bannerY + bannerH * 0.65f, tp)
     }
 }
+

@@ -4,7 +4,7 @@
     "type": "BUNDLE",
     "kind": "RegularFile"
   },
-  "applicationId": "com.pickleball.video",
+  "applicationId": "asia.pickbase.video",
   "variantName": "release",
   "elements": [
     {
