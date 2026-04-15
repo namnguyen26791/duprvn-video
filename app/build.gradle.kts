@@ -20,6 +20,24 @@ android {
         buildConfigField("String", "FIREBASE_DB_URL", "\"https://vdpr-45c0e-default-rtdb.asia-southeast1.firebasedatabase.app\"")
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = file("../pickbase-release.jks")   // đường dẫn tới keystore
+            storePassword = System.getenv("KEYSTORE_PASS") ?: ""
+            keyAlias = "pickbase"
+            keyPassword = System.getenv("KEY_PASS") ?: ""
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+
     buildFeatures {
         compose = true
         buildConfig = true
