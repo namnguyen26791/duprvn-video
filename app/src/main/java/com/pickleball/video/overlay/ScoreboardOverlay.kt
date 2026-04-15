@@ -20,18 +20,17 @@ object ScoreboardOverlay {
         val boxW = width * 0.42f
         val cornerR = 8f * s
 
-        val leftName = if (match.courtSwapped) match.right.teamName else match.left.teamName
-        val rightName = if (match.courtSwapped) match.left.teamName else match.right.teamName
-        val leftServing = if (match.courtSwapped) match.serve == "right" else match.serve == "left"
-        val serverNum = match.serverNum // 1 or 2 — server number in pickleball
-
-        // Fixed: row 1 = left team, row 2 = right team (never swap)
-        val row1Name = leftName
-        val row2Name = rightName
+        // Tên đội cố định từ đầu đến cuối — không đổi dù swap sân
+        val row1Name = match.left.teamName
+        val row2Name = match.right.teamName
+        // scoreLeft luôn là điểm của left team, scoreRight luôn là điểm của right team
+        // courtSwapped chỉ ảnh hưởng vị trí vật lý trên sân, không ảnh hưởng điểm số
         val row1Score = match.scoreLeft
         val row2Score = match.scoreRight
-        val row1Serving = leftServing
-        val row2Serving = !leftServing
+        // Serving: left team đang giao nếu serve=="left"
+        val row1Serving = match.serve == "left"
+        val row2Serving = match.serve == "right"
+        val serverNum = match.serverNum
 
         val boxH = rowH * 2 + pad * 3
         val boxX = margin
@@ -83,8 +82,8 @@ object ScoreboardOverlay {
         canvas.drawText("$row2Score", boxX + boxW - pad, r2Y, scoreP)
 
         // Score summary below box: serving-receiving-serverNum
-        val sScore = if (leftServing) match.scoreLeft else match.scoreRight
-        val rScore = if (leftServing) match.scoreRight else match.scoreLeft
+        val sScore = if (row1Serving) match.scoreLeft else match.scoreRight
+        val rScore = if (row1Serving) match.scoreRight else match.scoreLeft
         val sumP = Paint().apply { color = Color.parseColor("#94A3B8"); textSize = 14f * s; isAntiAlias = true; typeface = Typeface.DEFAULT_BOLD }
         canvas.drawText("$sScore-$rScore-${match.serverNum}", boxX + pad, boxY + boxH + 16f * s, sumP)
 

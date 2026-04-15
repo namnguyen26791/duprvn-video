@@ -35,7 +35,7 @@ fun VideoApp() {
     var courtMatches by remember { mutableStateOf<List<CourtMatchItem>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var autoLaunched by remember { mutableStateOf<Int?>(null) }
+    var autoLaunched by remember { mutableStateOf<String?>(null) } // "matchId:broadcastId"
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -56,16 +56,20 @@ fun VideoApp() {
                     it.stream_ended_at.isNullOrBlank() &&
                     !it.rtmp_url.isNullOrBlank()
                 }
-                if (playing != null && autoLaunched != playing.id) {
-                    autoLaunched = playing.id
-                    val intent = Intent(context, StreamActivity::class.java).apply {
-                        putExtra("match_id", playing.id)
-                        putExtra("match_type", playing.match_type)
-                        putExtra("api_base", apiBase)
-                        putExtra("tournament_id", tid)
-                        putExtra("court_name", court)
+                if (playing != null) {
+                    // Track bằng "matchId:broadcastId" — khi admin tạo broadcast mới, launchKey thay đổi → auto-launch lại
+                    val launchKey = "${playing.id}:${playing.broadcast_id ?: playing.rtmp_url ?: "none"}"
+                    if (autoLaunched != launchKey && !playing.rtmp_url.isNullOrBlank()) {
+                        autoLaunched = launchKey
+                        val intent = Intent(context, StreamActivity::class.java).apply {
+                            putExtra("match_id", playing.id)
+                            putExtra("match_type", playing.match_type)
+                            putExtra("api_base", apiBase)
+                            putExtra("tournament_id", tid as Int)
+                            putExtra("court_name", court)
+                        }
+                        context.startActivity(intent)
                     }
-                    context.startActivity(intent)
                 }
             } catch (_: Exception) {}
             delay(5000)

@@ -48,6 +48,7 @@ data class CourtMatchItem(
     val rtmp_url: String?,
     val stream_key: String?,
     val youtube_video_id: String?,
+    val broadcast_id: String?,
     val stream_started_at: String?,
     val stream_ended_at: String?,
 )
