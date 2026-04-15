@@ -55,7 +55,7 @@ data class CourtMatchItem(
 
 interface ApiService {
     @GET("public/tournaments")
-    suspend fun getTournaments(): TournamentListResponse
+    suspend fun getTournaments(@Query("active") active: Int = 1): TournamentListResponse
 
     @GET("public/tournaments/{id}/stream-config")
     suspend fun getStreamConfig(@Path("id") tournamentId: Int): StreamConfigResponse
