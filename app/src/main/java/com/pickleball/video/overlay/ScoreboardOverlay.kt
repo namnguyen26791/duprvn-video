@@ -31,6 +31,7 @@ object ScoreboardOverlay {
         val row1Serving = match.serve == "left"
         val row2Serving = match.serve == "right"
         val serverNum = match.serverNum
+        val isSingles = match.matchFormat == "singles"
 
         val boxH = rowH * 2 + pad * 3
         val boxX = margin
@@ -57,7 +58,7 @@ object ScoreboardOverlay {
             val ballR = 4f * s
             val b1X = boxX + pad + nameW + 8f * s
             canvas.drawCircle(b1X, r1Y - 4f * s, ballR, ballP)
-            if (serverNum >= 2) {
+            if (!isSingles && serverNum >= 2) {
                 canvas.drawCircle(b1X + ballR * 2.5f, r1Y - 4f * s, ballR, ballP)
             }
         }
@@ -75,17 +76,18 @@ object ScoreboardOverlay {
             val ballR = 4f * s
             val b2X = boxX + pad + nameW2 + 8f * s
             canvas.drawCircle(b2X, r2Y - 4f * s, ballR, ballP)
-            if (serverNum >= 2) {
+            if (!isSingles && serverNum >= 2) {
                 canvas.drawCircle(b2X + ballR * 2.5f, r2Y - 4f * s, ballR, ballP)
             }
         }
         canvas.drawText("$row2Score", boxX + boxW - pad, r2Y, scoreP)
 
-        // Score summary below box: serving-receiving-serverNum
+        // Score summary below box
         val sScore = if (row1Serving) match.scoreLeft else match.scoreRight
         val rScore = if (row1Serving) match.scoreRight else match.scoreLeft
         val sumP = Paint().apply { color = Color.parseColor("#94A3B8"); textSize = 14f * s; isAntiAlias = true; typeface = Typeface.DEFAULT_BOLD }
-        canvas.drawText("$sScore-$rScore-${match.serverNum}", boxX + pad, boxY + boxH + 16f * s, sumP)
+        val scoreText = if (isSingles) "$sScore-$rScore" else "$sScore-$rScore-${match.serverNum}"
+        canvas.drawText(scoreText, boxX + pad, boxY + boxH + 16f * s, sumP)
 
         // Tournament name + Round name at TOP-LEFT
         val topLabel = buildString {

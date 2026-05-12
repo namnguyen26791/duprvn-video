@@ -17,6 +17,7 @@ data class MatchState(
     val serverNum: Int = 2,
     val serverHand: Int = 1,
     val courtSwapped: Boolean = false,
+    val matchFormat: String = "doubles",
     val court: String? = null,
     val tournamentId: Int? = null,
     val tournamentName: String? = null,
