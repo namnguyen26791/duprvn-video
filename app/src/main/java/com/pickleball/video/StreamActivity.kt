@@ -44,6 +44,7 @@ class StreamActivity : AppCompatActivity() {
         apiBase = intent.getStringExtra("api_base") ?: ""
         tournamentId = intent.getIntExtra("tournament_id", 0)
         courtName = intent.getStringExtra("court_name") ?: "Sân"
+        val cameraId = intent.getStringExtra("camera_id") ?: "0"
 
         val root = FrameLayout(this)
         root.setBackgroundColor(Color.BLACK)
@@ -70,7 +71,7 @@ class StreamActivity : AppCompatActivity() {
         streamManager = StreamManager(this, openGlView) { status ->
             runOnUiThread { statusText.text = status }
         }
-        streamManager?.init(courtName)
+        streamManager?.init(courtName, cameraId)
 
         openGlView.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {

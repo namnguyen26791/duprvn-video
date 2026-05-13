@@ -1,6 +1,7 @@
 package asia.pickbase.video
 
 import android.content.Intent
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -18,8 +19,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.painterResource
-import androidx.compose.foundation.Image
 import asia.pickbase.video.data.*
+import asia.pickbase.video.stream.CameraInfo
+import asia.pickbase.video.stream.StreamManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -35,9 +37,18 @@ fun VideoApp() {
     var courtMatches by remember { mutableStateOf<List<CourtMatchItem>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var autoLaunched by remember { mutableStateOf<String?>(null) } // "matchId:broadcastId"
+    var autoLaunched by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+
+    // Camera selection
+    var backCameras by remember { mutableStateOf<List<CameraInfo>>(emptyList()) }
+    var selectedCameraId by remember { mutableStateOf("0") }
+    
+    LaunchedEffect(Unit) {
+        backCameras = StreamManager.getBackCameras(context)
+        if (backCameras.isNotEmpty()) selectedCameraId = backCameras.first().id
+    }
 
     // Step 3: Poll court matches, auto-launch when a match starts playing
     LaunchedEffect(step, selectedCourt) {
@@ -67,6 +78,7 @@ fun VideoApp() {
                             putExtra("api_base", apiBase)
                             putExtra("tournament_id", tid as Int)
                             putExtra("court_name", court)
+                            putExtra("camera_id", selectedCameraId)
                         }
                         context.startActivity(intent)
                     }
@@ -98,12 +110,38 @@ fun VideoApp() {
 
                 when (step) {
                     0 -> {
-                        Text("Nhập địa chỉ server", fontSize = 14.sp, color = Color.Gray)
-                        OutlinedTextField(
-                            value = apiBase, onValueChange = { apiBase = it },
-                            label = { Text("API Base URL") },
-                            modifier = Modifier.fillMaxWidth(), singleLine = true,
-                        )
+                        // Camera selector
+                        Text("Chọn camera", fontSize = 14.sp, color = Color.Gray)
+                        if (backCameras.isEmpty()) {
+                            Text("⚠️ Chưa phát hiện camera (cần cấp quyền Camera)", fontSize = 12.sp, color = Color(0xFFEAB308))
+                        } else if (backCameras.size == 1) {
+                            Text("📷 ${backCameras[0].label}", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Text("Thiết bị chỉ có 1 camera sau khả dụng", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                        } else {
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                backCameras.forEach { cam ->
+                                    val isSelected = selectedCameraId == cam.id
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth().clickable { selectedCameraId = cam.id },
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = if (isSelected) Color(0xFFDCFCE7) else MaterialTheme.colorScheme.surface
+                                        ),
+                                    ) {
+                                        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Text(cam.label, fontSize = 13.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
+                                            Spacer(modifier = Modifier.weight(1f))
+                                            if (isSelected) Text("✓", color = Color(0xFF16A34A), fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
                         if (error != null) Text(error!!, color = Color.Red, fontSize = 12.sp)
                         Button(
                             onClick = {
@@ -116,12 +154,12 @@ fun VideoApp() {
                                     loading = false
                                 }
                             },
-                            enabled = apiBase.isNotBlank() && !loading,
+                            enabled = !loading,
                             modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A)),
                         ) {
                             if (loading) CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
-                            else Text("Tiếp tục →", fontWeight = FontWeight.Bold)
+                            else Text("Bắt đầu →", fontWeight = FontWeight.Bold)
                         }
                     }
 

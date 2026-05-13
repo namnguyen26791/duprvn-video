@@ -6821,15 +6821,12 @@ androidx.compose.material3.CalendarModel_androidKt
 androidx.compose.material3.CalendarMonth
 androidx.compose.material3.CardColors:
     public static final int $stable
-    public final androidx.compose.material3.CardColors copy-jRlVdoo(long,long,long,long)
     public static synthetic androidx.compose.material3.CardColors copy-jRlVdoo$default(androidx.compose.material3.CardColors,long,long,long,long,int,java.lang.Object)
     public final long getContainerColor-0d7_KjU()
     public final long getContentColor-0d7_KjU()
     public final long getDisabledContainerColor-0d7_KjU()
     public final long getDisabledContentColor-0d7_KjU()
 androidx.compose.material3.CardDefaults:
-    public static final int $stable
-    public final androidx.compose.material3.CardColors cardColors-ro_MJ88(long,long,long,long,androidx.compose.runtime.Composer,int,int)
     public final androidx.compose.material3.CardColors elevatedCardColors(androidx.compose.runtime.Composer,int)
     public final androidx.compose.material3.CardColors elevatedCardColors-ro_MJ88(long,long,long,long,androidx.compose.runtime.Composer,int,int)
     public final androidx.compose.material3.CardElevation elevatedCardElevation-aqJV_2Y(float,float,float,float,float,float,androidx.compose.runtime.Composer,int,int)
@@ -7432,8 +7429,6 @@ androidx.compose.material3.MappedInteractionSource$special$$inlined$map$1$2
 androidx.compose.material3.MappedInteractionSource$special$$inlined$map$1
 androidx.compose.material3.MappedInteractionSource
 androidx.compose.material3.MaterialRippleTheme
-androidx.compose.material3.MaterialTheme:
-    public static final int $stable
 androidx.compose.material3.MaterialThemeKt$MaterialTheme$1
 androidx.compose.material3.MaterialThemeKt$MaterialTheme$2
 androidx.compose.material3.MaterialThemeKt
@@ -21478,9 +21473,11 @@ asia.pickbase.video.R$drawable:
 asia.pickbase.video.R$string
 asia.pickbase.video.R$xml
 asia.pickbase.video.R
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$5$invoke$$inlined$items$default$2
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$7$invoke$$inlined$items$default$2
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$9$1$invoke$$inlined$items$default$2
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$5$invoke$$inlined$items$default$2
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$7$invoke$$inlined$items$default$2
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$9$1$invoke$$inlined$items$default$2
+asia.pickbase.video.VideoAppKt:
+    private static final void VideoApp$lambda$2(androidx.compose.runtime.MutableState,java.lang.String)
 asia.pickbase.video.data.CourtMatchItem:
     public static final int $stable
     private final java.lang.String broadcast_id
@@ -21523,11 +21520,12 @@ asia.pickbase.video.data.MatchState:
     public static final int $stable
     public void <init>()
     public final asia.pickbase.video.data.TeamSide component1()
-    public final java.lang.Integer component10()
-    public final java.lang.String component11()
+    public final java.lang.String component10()
+    public final java.lang.Integer component11()
     public final java.lang.String component12()
-    public final boolean component13()
-    public final java.lang.String component14()
+    public final java.lang.String component13()
+    public final boolean component14()
+    public final java.lang.String component15()
     public final asia.pickbase.video.data.TeamSide component2()
     public final int component3()
     public final int component4()
@@ -21536,8 +21534,8 @@ asia.pickbase.video.data.MatchState:
     public final int component7()
     public final boolean component8()
     public final java.lang.String component9()
-    public final asia.pickbase.video.data.MatchState copy(asia.pickbase.video.data.TeamSide,asia.pickbase.video.data.TeamSide,int,int,java.lang.String,int,int,boolean,java.lang.String,java.lang.Integer,java.lang.String,java.lang.String,boolean,java.lang.String)
-    public static synthetic asia.pickbase.video.data.MatchState copy$default(asia.pickbase.video.data.MatchState,asia.pickbase.video.data.TeamSide,asia.pickbase.video.data.TeamSide,int,int,java.lang.String,int,int,boolean,java.lang.String,java.lang.Integer,java.lang.String,java.lang.String,boolean,java.lang.String,int,java.lang.Object)
+    public final asia.pickbase.video.data.MatchState copy(asia.pickbase.video.data.TeamSide,asia.pickbase.video.data.TeamSide,int,int,java.lang.String,int,int,boolean,java.lang.String,java.lang.String,java.lang.Integer,java.lang.String,java.lang.String,boolean,java.lang.String)
+    public static synthetic asia.pickbase.video.data.MatchState copy$default(asia.pickbase.video.data.MatchState,asia.pickbase.video.data.TeamSide,asia.pickbase.video.data.TeamSide,int,int,java.lang.String,int,int,boolean,java.lang.String,java.lang.String,java.lang.Integer,java.lang.String,java.lang.String,boolean,java.lang.String,int,java.lang.Object)
     public final java.lang.String getCourt()
     public final boolean getCourtSwapped()
     public final int getServerHand()
@@ -21627,9 +21625,18 @@ asia.pickbase.video.data.TournamentListResponse:
 asia.pickbase.video.overlay.ScoreboardFilterRender
 asia.pickbase.video.overlay.ScoreboardOverlay:
     public static final int $stable
+asia.pickbase.video.stream.CameraInfo:
+    public static final int $stable
+    public final java.lang.String component1()
+    public final java.lang.String component2()
+    public final float component3()
+    public final asia.pickbase.video.stream.CameraInfo copy(java.lang.String,java.lang.String,float)
+    public static synthetic asia.pickbase.video.stream.CameraInfo copy$default(asia.pickbase.video.stream.CameraInfo,java.lang.String,java.lang.String,float,int,java.lang.Object)
 asia.pickbase.video.stream.StreamManager:
     public final java.lang.String getCourtName()
     public final asia.pickbase.video.data.MatchState getCurrentMatch()
+    public final java.lang.String getSelectedCameraId()
+    public static synthetic void init$default(asia.pickbase.video.stream.StreamManager,java.lang.String,java.lang.String,int,java.lang.Object)
     public final boolean isStreaming()
     public final void stopStream()
 com.google.android.gms.actions.ItemListIntents
@@ -26395,7 +26402,6 @@ kotlin.collections.ArraysKt___ArraysKt:
     public static final int getLastIndex(byte[])
     public static final int getLastIndex(char[])
     public static final int getLastIndex(double[])
-    public static final int getLastIndex(float[])
     public static final int getLastIndex(long[])
     public static final int getLastIndex(short[])
     public static final int getLastIndex(boolean[])
@@ -26845,7 +26851,6 @@ kotlin.collections.ArraysKt___ArraysKt:
     public static final java.lang.Comparable minOrNull(java.lang.Comparable[])
     public static final java.lang.Double minOrNull(double[])
     public static final java.lang.Double minOrNull(java.lang.Double[])
-    public static final java.lang.Float minOrNull(float[])
     public static final java.lang.Float minOrNull(java.lang.Float[])
     public static final java.lang.Integer minOrNull(int[])
     public static final java.lang.Long minOrNull(long[])
@@ -36896,8 +36901,16 @@ androidx.compose.foundation.layout.LayoutOrientation$EnumUnboxingLocalUtility:
     public static synthetic java.lang.String name(int)
     public static synthetic int valueOf(java.lang.String)
 androidx.compose.foundation.layout.LayoutOrientation
-androidx.compose.foundation.layout.LayoutWeightElement
-androidx.compose.foundation.layout.LayoutWeightNode
+androidx.compose.foundation.layout.LayoutWeightElement:
+    static void <clinit>()
+    public static androidx.compose.foundation.layout.LayoutWeightNode create()
+    public static void update$9()
+androidx.compose.foundation.layout.LayoutWeightNode:
+    public static final int $stable
+    static void <clinit>()
+    public static androidx.compose.foundation.layout.RowColumnParentData modifyParentData()
+    public static void setFill()
+    public static void setWeight()
 androidx.compose.foundation.layout.PaddingElement:
     public final kotlin.jvm.functions.Function1 inspectorInfo
     public boolean rtlAware
@@ -36973,21 +36986,14 @@ androidx.compose.foundation.layout.RowColumnMeasurementHelper:
     public static void placeHelper()
 androidx.compose.foundation.layout.RowColumnParentData:
     public static final int $stable
-    public androidx.compose.foundation.layout.CrossAxisAlignment crossAxisAlignment
-    public boolean fill
-    public float weight
     static void <clinit>()
-    public final boolean equals(java.lang.Object)
     public static androidx.compose.foundation.layout.CrossAxisAlignment getCrossAxisAlignment()
     public static boolean getFill()
     public static float getWeight()
-    public final int hashCode()
     public static void setFill()
     public static void setWeight()
-    public final java.lang.String toString()
 androidx.compose.foundation.layout.RowScope:
     public abstract androidx.compose.ui.Modifier weight()
-    public static androidx.compose.ui.Modifier weight$default()
 androidx.compose.foundation.layout.RowScopeInstance:
     public final androidx.compose.ui.Modifier weight()
 androidx.compose.foundation.layout.SizeElement:
@@ -38544,7 +38550,6 @@ androidx.compose.material3.ButtonDefaults:
     public static final androidx.compose.foundation.layout.PaddingValues TextButtonWithIconContentPadding
     public static final float TextButtonWithIconHorizontalEndPadding
     public static androidx.compose.material3.ButtonColors buttonColors()
-    public static androidx.compose.material3.ButtonColors buttonColors-ro_MJ88()
     public static androidx.compose.material3.ButtonElevation buttonElevation-R_JCAzs()
     public static androidx.compose.foundation.layout.PaddingValues getContentPadding()
     public static androidx.compose.material3.ButtonColors getDefaultTextButtonColors$material3_release()
@@ -38580,7 +38585,14 @@ androidx.compose.material3.CardColors:
     static void <clinit>()
     public static long containerColor-vNxB06k$material3_release()
     public static long contentColor-vNxB06k$material3_release()
-androidx.compose.material3.CardDefaults
+    public static androidx.compose.material3.CardColors copy-jRlVdoo()
+androidx.compose.material3.CardDefaults:
+    public static final int $stable
+    public static final androidx.compose.material3.CardDefaults INSTANCE
+    static void <clinit>()
+    public static androidx.compose.material3.CardColors cardColors()
+    public static androidx.compose.material3.CardElevation cardElevation-aqJV_2Y()
+    public static androidx.compose.ui.graphics.Shape getShape()
 androidx.compose.material3.CardElevation$animateElevation$1$1$1
 androidx.compose.material3.CardElevation$animateElevation$1$1
 androidx.compose.material3.CardElevation$animateElevation$2$1
@@ -38593,7 +38605,6 @@ androidx.compose.material3.CardElevation:
 androidx.compose.material3.CardKt$Card$1:
     public final void invoke$4()
 androidx.compose.material3.CardKt$Card$2:
-    public final synthetic int $$default
     public final void invoke$4()
 androidx.compose.material3.ColorScheme:
     static void <clinit>()
@@ -38625,7 +38636,7 @@ androidx.compose.material3.ColorScheme:
     public static long getScrim-0d7_KjU()
     public static long getSecondary-0d7_KjU()
     public static long getSecondaryContainer-0d7_KjU()
-    public static long getSurface-0d7_KjU()
+    public final long getSurface-0d7_KjU()
     public static long getSurfaceBright-0d7_KjU()
     public static long getSurfaceContainer-0d7_KjU()
     public static long getSurfaceContainerHigh-0d7_KjU()
@@ -44449,7 +44460,6 @@ androidx.compose.ui.res.ImageVectorCache:
     public static androidx.compose.ui.res.ImageVectorCache$ImageVectorEntry get()
     public static void prune()
     public static void set()
-androidx.compose.ui.res.PainterResources_androidKt
 androidx.compose.ui.res.ResourceResolutionException:
     static void <clinit>()
 androidx.compose.ui.res.Resources_androidKt
@@ -48355,20 +48365,17 @@ asia.pickbase.video.ComposableSingletons$MainActivityKt:
 asia.pickbase.video.ComposableSingletons$VideoAppKt$lambda-1$1:
     public final void invoke$4()
 asia.pickbase.video.ComposableSingletons$VideoAppKt$lambda-2$1:
-    public final void invoke$4()
+    public final void invoke$60()
 asia.pickbase.video.ComposableSingletons$VideoAppKt$lambda-3$1:
     public final void invoke$60()
 asia.pickbase.video.ComposableSingletons$VideoAppKt$lambda-4$1:
     public final void invoke$60()
-asia.pickbase.video.ComposableSingletons$VideoAppKt$lambda-5$1:
-    public final void invoke$60()
 asia.pickbase.video.ComposableSingletons$VideoAppKt:
     public static final asia.pickbase.video.ComposableSingletons$VideoAppKt INSTANCE
     public static kotlin.jvm.functions.Function2 getLambda-1$app_release()
-    public static kotlin.jvm.functions.Function2 getLambda-2$app_release()
+    public static kotlin.jvm.functions.Function3 getLambda-2$app_release()
     public static kotlin.jvm.functions.Function3 getLambda-3$app_release()
     public static kotlin.jvm.functions.Function3 getLambda-4$app_release()
-    public static kotlin.jvm.functions.Function3 getLambda-5$app_release()
 asia.pickbase.video.MainActivity:
     public static final int $stable
     static void <clinit>()
@@ -48392,75 +48399,83 @@ asia.pickbase.video.StreamActivity:
     static void <clinit>()
     public static void startConfigCheck()
 asia.pickbase.video.VideoAppKt$$InternalSyntheticThrowCCEIfNotNull$81$08ec576c97ddf4d501270d0f3398c3bf84a526dbddbf55b1ccee6bbaaee1442d$0
-asia.pickbase.video.VideoAppKt$VideoApp$1$$InternalSyntheticThrowCCEIfNotNull$115$ff6822a96156dab26b6aa25f1bc7f45dc795aeeb778e3b064ef4c4340937d7a0$0
-asia.pickbase.video.VideoAppKt$VideoApp$1$$InternalSyntheticThrowCCEIfNotNull$115$ff6822a96156dab26b6aa25f1bc7f45dc795aeeb778e3b064ef4c4340937d7a0$1
 asia.pickbase.video.VideoAppKt$VideoApp$1:
+    public int label
     public final java.lang.Object invoke$2()
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$$InternalSyntheticThrowCCEIfNotNull$171$023ce4bdf90ae5e011191022f834a3d355d63d48a198b42c72f0c7bad7efeb0f$0
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$1$1:
-    public final void invoke$61()
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$11$1:
+asia.pickbase.video.VideoAppKt$VideoApp$2$$InternalSyntheticThrowCCEIfNotNull$115$f1dc607dd72e79cdbf4710d62801854b8e9bad833d120daca6d417f4b4a03622$0
+asia.pickbase.video.VideoAppKt$VideoApp$2$$InternalSyntheticThrowCCEIfNotNull$115$f1dc607dd72e79cdbf4710d62801854b8e9bad833d120daca6d417f4b4a03622$1
+asia.pickbase.video.VideoAppKt$VideoApp$2:
+    public final java.lang.Object invoke$2()
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$$InternalSyntheticThrowCCEIfNotNull$171$8607747db84c0e31f6900213d9db23eb0f26fa0f431f4dbd73539f94b4b0e8e4$0
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$1$1$1$1:
     public final void invoke()
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$2$1$$InternalSyntheticThrowCCEIfNotNull$115$ab28be2971f0b967df615364fcb5c6b8bd7bb0f1147264e8aec79cc6c09886f8$0
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$2$1:
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$1$1$2:
+    public final void invoke$62()
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$11$1:
+    public final void invoke()
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$2$1$$InternalSyntheticThrowCCEIfNotNull$115$f803e847ab6a65e8f663306ffe3d496795a76c9dc2fc9a80f5be916d72a7fbeb$0
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$2$1:
     public androidx.compose.runtime.MutableState L$0
     public final java.lang.Object invoke$2()
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$2:
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$2:
     public final void invoke()
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$3:
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$3:
     public final void invoke$60()
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$4$1:
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$4$1:
     public final void invoke$61()
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$5$1$1$1$$InternalSyntheticThrowCCEIfNotNull$115$2a1600c18d6bdf3168bc1a11f42fae2378cf05ca80d01e32520a597d004c774e$0
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$5$1$1$1:
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$5$1$1$1$$InternalSyntheticThrowCCEIfNotNull$115$196ce26c3e0f90f34fe924ebb33dfd1632cf3c902f490dc41259a3ae6db66193$0
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$5$1$1$1:
     public final synthetic asia.pickbase.video.data.TournamentListItem $t
     public java.lang.Object L$0
     public int label
     public final java.lang.Object invoke$2()
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$5$1$1:
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$5$1$1:
     public final synthetic asia.pickbase.video.data.TournamentListItem $t
     public final void invoke()
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$5$1$2:
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$5$1$2:
     public final synthetic asia.pickbase.video.data.TournamentListItem $t
     public final void invoke$62()
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$5$invoke$$inlined$items$default$1
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$5$invoke$$inlined$items$default$3:
-    public final synthetic asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$5$invoke$$inlined$items$default$1 $contentType
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$5$invoke$$inlined$items$default$1
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$5$invoke$$inlined$items$default$3:
+    public final synthetic asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$5$invoke$$inlined$items$default$1 $contentType
     public final java.lang.Object invoke$33()
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$5$invoke$$inlined$items$default$4$$InternalSyntheticThrowCCEIfNotNull$168$f9c3bfd957c6dec58b8c837f5ab0543019ab5a6f2177a396059b6d040a99bfee$0
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$5$invoke$$inlined$items$default$4:
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$5$invoke$$inlined$items$default$4$$InternalSyntheticThrowCCEIfNotNull$168$3061b86ad35760e8c3d5508adcb2ec5c99f052e4a77638cfa1f40101d8b3e094$0
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$5$invoke$$inlined$items$default$4:
     public final void invoke$63()
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$5:
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$5:
     public final void invoke$64()
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$6$1:
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$6$1:
     public final void invoke()
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$7$1$1$1
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$7$1$2
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$7$invoke$$inlined$items$default$1
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$7$invoke$$inlined$items$default$3
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$7$invoke$$inlined$items$default$4
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$7
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$8$1:
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$7$1$1$1
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$7$1$2
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$7$invoke$$inlined$items$default$1
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$7$invoke$$inlined$items$default$3
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$7$invoke$$inlined$items$default$4
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$7
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$8$1:
     public final void invoke()
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$9$1$1$1
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$9$1$invoke$$inlined$items$default$1
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$9$1$invoke$$inlined$items$default$3:
-    public final synthetic asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$9$1$invoke$$inlined$items$default$1 $contentType
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$9$1$1$1
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$9$1$invoke$$inlined$items$default$1
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$9$1$invoke$$inlined$items$default$3:
+    public final synthetic asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$9$1$invoke$$inlined$items$default$1 $contentType
     public final java.lang.Object invoke$33()
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$9$1$invoke$$inlined$items$default$4$$InternalSyntheticThrowCCEIfNotNull$168$7d3bc4f6dcf4a8d5a34de45eef3912b59ec8a2856b0a0b9e93a2fe53c99e5949$0
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$9$1$invoke$$inlined$items$default$4:
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$9$1$invoke$$inlined$items$default$4$$InternalSyntheticThrowCCEIfNotNull$168$762bb25cbd7da66f12c6e330ca17d95820e9190c74cbcbbabac029590dc54b3a$0
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$9$1$invoke$$inlined$items$default$4:
     public final void invoke$63()
-asia.pickbase.video.VideoAppKt$VideoApp$2$1$1$9$1:
+asia.pickbase.video.VideoAppKt$VideoApp$3$1$1$9$1:
     public final void invoke$64()
-asia.pickbase.video.VideoAppKt$VideoApp$2$1:
+asia.pickbase.video.VideoAppKt$VideoApp$3$1:
     public final synthetic androidx.compose.runtime.MutableState $autoLaunched$delegate
     public final void invoke$62()
-asia.pickbase.video.VideoAppKt$VideoApp$3:
+asia.pickbase.video.VideoAppKt$VideoApp$4:
     public final void invoke$4()
 asia.pickbase.video.VideoAppKt:
+    public static final java.lang.String access$VideoApp$lambda$10(androidx.compose.runtime.MutableState)
     public static final void access$VideoApp$lambda$13(androidx.compose.runtime.MutableState)
     public static final boolean access$VideoApp$lambda$25(androidx.compose.runtime.MutableState)
     public static final void access$VideoApp$lambda$26(androidx.compose.runtime.MutableState,boolean)
+    public static final java.lang.String access$VideoApp$lambda$28(androidx.compose.runtime.MutableState)
+    public static final java.util.List access$VideoApp$lambda$34(androidx.compose.runtime.MutableState)
     public static final void access$VideoApp$lambda$5(androidx.compose.runtime.MutableIntState,int)
 asia.pickbase.video.data.ApiService$Companion:
     public static final synthetic asia.pickbase.video.data.ApiService$Companion $$INSTANCE
@@ -48483,6 +48498,7 @@ asia.pickbase.video.data.FirebaseMatchListener:
 asia.pickbase.video.data.MatchState:
     static void <clinit>()
     public static asia.pickbase.video.data.TeamSide getLeft()
+    public static java.lang.String getMatchFormat()
     public static boolean getPaused()
     public static asia.pickbase.video.data.TeamSide getRight()
     public static java.lang.String getRoundName()
@@ -48503,13 +48519,20 @@ asia.pickbase.video.overlay.ScoreboardOverlay:
     public static final asia.pickbase.video.overlay.ScoreboardOverlay INSTANCE
     static void <clinit>()
     public static void drawPaused()
+asia.pickbase.video.stream.CameraInfo:
+    static void <clinit>()
+    public static float getFocalLength()
+    public final java.lang.String getId()
+    public final java.lang.String getLabel()
 asia.pickbase.video.stream.StreamManager$$InternalSyntheticLambda$4$fbab68a17580a43b1f7a819c44abbafc69740906d830daf6a54c2c23aaa5233f$0
+asia.pickbase.video.stream.StreamManager$Companion
 asia.pickbase.video.stream.StreamManager:
     public static final int $stable
-    public final android.content.Context context
+    public static final asia.pickbase.video.stream.StreamManager$Companion Companion
     public java.lang.String courtName
     public final com.pedro.rtplibrary.view.OpenGlView openGlView
     static void <clinit>()
+    public static void applyZoomOut()
     public static void init()
     public final void onAuthErrorRtmp()
     public final void onAuthSuccessRtmp()
@@ -50834,6 +50857,7 @@ com.pedro.encoder.input.video.Camera2ApiManager:
     public final void prepareCamera(android.graphics.SurfaceTexture,int,int,int)
     public final void prepareCamera(android.view.Surface,int)
     public final void prepareCamera$1(android.view.Surface,int)
+    public final void prepareCamera$2(android.view.Surface,int)
     public static void resetCameraValues()
     public static void setCameraId()
     public static void setModeAuto()
@@ -51327,7 +51351,6 @@ com.pedro.rtplibrary.rtmp.RtmpCamera2:
     public static void setMicrophoneMode()
     public static boolean shouldRetry()
     public static void startEncoders()
-    public static void startPreview()
     public static void startPreview$1()
     public static void startPreview$2()
     public static void startPreview$3()
