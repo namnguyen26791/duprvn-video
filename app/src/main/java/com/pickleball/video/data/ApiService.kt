@@ -2,7 +2,9 @@ package asia.pickbase.video.data
 
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import retrofit2.http.Body
 import retrofit2.http.GET
+import retrofit2.http.POST
 import retrofit2.http.Path
 import retrofit2.http.Query
 
@@ -53,6 +55,13 @@ data class CourtMatchItem(
     val stream_ended_at: String?,
 )
 
+data class DeviceStatusRequest(
+    val tournament_id: Int,
+    val court_name: String,
+    val battery_level: Int,
+    val is_streaming: Boolean = false,
+)
+
 interface ApiService {
     @GET("public/tournaments")
     suspend fun getTournaments(@Query("active") active: Int = 1): TournamentListResponse
@@ -71,6 +80,9 @@ interface ApiService {
         @Path("id") tournamentId: Int,
         @Query("court") court: String
     ): List<CourtMatchItem>
+
+    @POST("public/device-status")
+    suspend fun reportDeviceStatus(@Body body: DeviceStatusRequest): Unit
 
     companion object {
         fun create(baseUrl: String): ApiService {

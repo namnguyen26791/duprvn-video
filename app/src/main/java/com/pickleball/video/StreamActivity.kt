@@ -1,6 +1,7 @@
 package asia.pickbase.video
 
 import android.graphics.Color
+import android.os.BatteryManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -11,6 +12,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.pedro.rtplibrary.view.OpenGlView
 import asia.pickbase.video.data.ApiService
+import asia.pickbase.video.data.DeviceStatusRequest
 import asia.pickbase.video.data.FirebaseMatchListener
 import asia.pickbase.video.stream.StreamManager
 import kotlinx.coroutines.flow.collectLatest
@@ -79,6 +81,7 @@ class StreamActivity : AppCompatActivity() {
                 // Don't start stream immediately — wait for polling to get config
                 statusText.text = "Đang chờ cấu hình..."
                 startConfigCheck()
+                startBatteryReport()
             }
             override fun surfaceChanged(h: SurfaceHolder, f: Int, w: Int, ht: Int) {}
             override fun surfaceDestroyed(holder: SurfaceHolder) { streamManager?.release() }
@@ -133,9 +136,38 @@ class StreamActivity : AppCompatActivity() {
         handler.post(configCheckRunnable!!)
     }
 
+    private var batteryRunnable: Runnable? = null
+
+    private fun startBatteryReport() {
+        batteryRunnable = object : Runnable {
+            override fun run() {
+                lifecycleScope.launch {
+                    val api = ApiService.create(apiBase)
+                    reportBattery(api)
+                }
+                handler.postDelayed(this, 180_000) // every 3 minutes
+            }
+        }
+        handler.post(batteryRunnable!!)
+    }
+
+    private suspend fun reportBattery(api: ApiService) {
+        try {
+            val bm = getSystemService(BATTERY_SERVICE) as BatteryManager
+            val level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+            api.reportDeviceStatus(DeviceStatusRequest(
+                tournament_id = tournamentId,
+                court_name = courtName,
+                battery_level = level,
+                is_streaming = isStreaming,
+            ))
+        } catch (_: Exception) {}
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         configCheckRunnable?.let { handler.removeCallbacks(it) }
+        batteryRunnable?.let { handler.removeCallbacks(it) }
         streamManager?.release()
     }
 }
