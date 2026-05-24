@@ -4,92 +4,45 @@ import android.graphics.*
 import asia.pickbase.video.data.MatchState
 
 /**
- * Scoreboard: bottom-left, 2 rows with border.
- * Row 1: green dot + team name + ball icons (right of name) ... score
- * Row 2: team name ... score
- * Ball icons: ● = tay 1, ●● = tay 2 (after serving team name)
+ * Overlay layout:
+ * - Scoreboard + tournament name: TOP-LEFT corner (one block)
+ * - Logos top-right: horizontal row from right edge
+ * - Logos bottom-right: horizontal row from right edge
+ * - Pause image: center of screen when paused
+ * - Marquee text: scrolling at BOTTOM of screen
  */
 object ScoreboardOverlay {
 
+    var pickbaseLogo: Bitmap? = null
+    var tournamentLogo: Bitmap? = null
+    var topRightLogos: List<Bitmap> = emptyList()
+    var bottomRightLogos: List<Bitmap> = emptyList()
+    var marqueeTexts: List<String> = emptyList()
+    var pauseImage: Bitmap? = null
+    private var marqueeOffset = 0f
+
     fun draw(canvas: Canvas, width: Int, height: Int, match: MatchState) {
         val s = height / 720f
-        val rowH = 38f * s
-        val pad = 12f * s
-        val margin = 16f * s
-        val bottomGap = 50f * s
-        val boxW = width * 0.42f
-        val cornerR = 8f * s
+        val margin = 12f * s
+        val pad = 8f * s
+        val cornerR = 6f * s
 
-        // Tên đội cố định từ đầu đến cuối — không đổi dù swap sân
+        // ═══════════════════════════════════════
+        // SCOREBOARD — TOP-LEFT (compact, with tournament name attached)
+        // ═══════════════════════════════════════
+        val rowH = 28f * s
+        val boxW = width * 0.34f
+
         val row1Name = match.left.teamName
         val row2Name = match.right.teamName
-        // scoreLeft luôn là điểm của left team, scoreRight luôn là điểm của right team
-        // courtSwapped chỉ ảnh hưởng vị trí vật lý trên sân, không ảnh hưởng điểm số
         val row1Score = match.scoreLeft
         val row2Score = match.scoreRight
-        // Serving: left team đang giao nếu serve=="left"
         val row1Serving = match.serve == "left"
         val row2Serving = match.serve == "right"
         val serverNum = match.serverNum
         val isSingles = match.matchFormat == "singles"
 
-        val boxH = rowH * 2 + pad * 3
-        val boxX = margin
-        val boxY = height - bottomGap - boxH
-        val rect = RectF(boxX, boxY, boxX + boxW, boxY + boxH)
-
-        // Background + border
-        val bg = Paint().apply { color = Color.parseColor("#DD000000"); style = Paint.Style.FILL; isAntiAlias = true }
-        val border = Paint().apply { color = Color.parseColor("#22C55E"); style = Paint.Style.STROKE; strokeWidth = 2f * s; isAntiAlias = true }
-        canvas.drawRoundRect(rect, cornerR, cornerR, bg)
-        canvas.drawRoundRect(rect, cornerR, cornerR, border)
-
-        val teamP = Paint().apply { color = Color.WHITE; textSize = 20f * s; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true }
-        val scoreP = Paint().apply { color = Color.WHITE; textSize = 28f * s; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true; textAlign = Paint.Align.RIGHT }
-        val ballP = Paint().apply { color = Color.parseColor("#FACC15"); style = Paint.Style.FILL; isAntiAlias = true }
-        val divP = Paint().apply { color = Color.parseColor("#444444"); strokeWidth = 1f * s }
-
-        // ── Row 1: Left team (fixed) ──
-        val r1Y = boxY + pad + rowH * 0.7f
-        canvas.drawText(row1Name, boxX + pad, r1Y, teamP)
-        // Ball dots on serving team
-        if (row1Serving) {
-            val nameW = teamP.measureText(row1Name)
-            val ballR = 4f * s
-            val b1X = boxX + pad + nameW + 8f * s
-            canvas.drawCircle(b1X, r1Y - 4f * s, ballR, ballP)
-            if (!isSingles && serverNum >= 2) {
-                canvas.drawCircle(b1X + ballR * 2.5f, r1Y - 4f * s, ballR, ballP)
-            }
-        }
-        canvas.drawText("$row1Score", boxX + boxW - pad, r1Y, scoreP)
-
-        // Divider
-        val divY = boxY + pad + rowH + pad * 0.5f
-        canvas.drawLine(boxX + pad, divY, boxX + boxW - pad, divY, divP)
-
-        // ── Row 2: Right team (fixed) ──
-        val r2Y = divY + pad + rowH * 0.5f
-        canvas.drawText(row2Name, boxX + pad, r2Y, teamP)
-        if (row2Serving) {
-            val nameW2 = teamP.measureText(row2Name)
-            val ballR = 4f * s
-            val b2X = boxX + pad + nameW2 + 8f * s
-            canvas.drawCircle(b2X, r2Y - 4f * s, ballR, ballP)
-            if (!isSingles && serverNum >= 2) {
-                canvas.drawCircle(b2X + ballR * 2.5f, r2Y - 4f * s, ballR, ballP)
-            }
-        }
-        canvas.drawText("$row2Score", boxX + boxW - pad, r2Y, scoreP)
-
-        // Score summary below box
-        val sScore = if (row1Serving) match.scoreLeft else match.scoreRight
-        val rScore = if (row1Serving) match.scoreRight else match.scoreLeft
-        val sumP = Paint().apply { color = Color.parseColor("#94A3B8"); textSize = 14f * s; isAntiAlias = true; typeface = Typeface.DEFAULT_BOLD }
-        val scoreText = if (isSingles) "$sScore-$rScore" else "$sScore-$rScore-${match.serverNum}"
-        canvas.drawText(scoreText, boxX + pad, boxY + boxH + 16f * s, sumP)
-
-        // Tournament name + Round name at TOP-LEFT
+        // Tournament name header (attached to top of scoreboard)
         val topLabel = buildString {
             if (!match.tournamentName.isNullOrEmpty()) append(match.tournamentName)
             if (!match.roundName.isNullOrEmpty()) {
@@ -97,26 +50,165 @@ object ScoreboardOverlay {
                 append(match.roundName)
             }
         }
+        val headerH = if (topLabel.isNotEmpty()) 22f * s else 0f
+        val boxH = headerH + rowH * 2 + pad * 2.5f
+        val boxX = margin
+        val boxY = margin
+
+        val rect = RectF(boxX, boxY, boxX + boxW, boxY + boxH)
+        val bg = Paint().apply { color = Color.parseColor("#DD000000"); style = Paint.Style.FILL; isAntiAlias = true }
+        val border = Paint().apply { color = Color.parseColor("#22C55E"); style = Paint.Style.STROKE; strokeWidth = 1.5f * s; isAntiAlias = true }
+        canvas.drawRoundRect(rect, cornerR, cornerR, bg)
+        canvas.drawRoundRect(rect, cornerR, cornerR, border)
+
+        // Tournament name inside box header
         if (topLabel.isNotEmpty()) {
-            val topBg = Paint().apply { color = Color.parseColor("#AA000000"); style = Paint.Style.FILL; isAntiAlias = true }
-            val topBorder = Paint().apply { color = Color.parseColor("#22C55E"); style = Paint.Style.STROKE; strokeWidth = 1.5f * s; isAntiAlias = true }
-            val topText = Paint().apply { color = Color.WHITE; textSize = 18f * s; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true }
-            val tw = topText.measureText(topLabel) + pad * 4
-            val topRect = RectF(margin, margin, margin + tw, margin + 28f * s)
-            canvas.drawRoundRect(topRect, cornerR, cornerR, topBg)
-            canvas.drawRoundRect(topRect, cornerR, cornerR, topBorder)
-            canvas.drawText(topLabel, margin + pad * 2, margin + 20f * s, topText)
+            val headerBg = Paint().apply { color = Color.parseColor("#22C55E"); style = Paint.Style.FILL; isAntiAlias = true }
+            val headerRect = RectF(boxX, boxY, boxX + boxW, boxY + headerH)
+            // Draw green header with top corners rounded
+            val headerPath = Path().apply {
+                addRoundRect(headerRect, floatArrayOf(cornerR, cornerR, cornerR, cornerR, 0f, 0f, 0f, 0f), Path.Direction.CW)
+            }
+            canvas.drawPath(headerPath, headerBg)
+            val labelP = Paint().apply { color = Color.WHITE; textSize = 11f * s; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true }
+            canvas.drawText(topLabel, boxX + pad, boxY + headerH - 6f * s, labelP)
         }
+
+        val teamP = Paint().apply { color = Color.WHITE; textSize = 16f * s; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true }
+        val scoreP = Paint().apply { color = Color.WHITE; textSize = 22f * s; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true; textAlign = Paint.Align.RIGHT }
+        val ballP = Paint().apply { color = Color.parseColor("#FACC15"); style = Paint.Style.FILL; isAntiAlias = true }
+        val divP = Paint().apply { color = Color.parseColor("#444444"); strokeWidth = 1f * s }
+
+        val contentTop = boxY + headerH
+
+        // Row 1
+        val r1Y = contentTop + pad + rowH * 0.7f
+        canvas.drawText(row1Name, boxX + pad, r1Y, teamP)
+        if (row1Serving) {
+            val nameW = teamP.measureText(row1Name)
+            val ballR = 3f * s
+            val b1X = boxX + pad + nameW + 6f * s
+            canvas.drawCircle(b1X, r1Y - 3f * s, ballR, ballP)
+            if (!isSingles && serverNum >= 2) canvas.drawCircle(b1X + ballR * 2.5f, r1Y - 3f * s, ballR, ballP)
+        }
+        canvas.drawText("$row1Score", boxX + boxW - pad, r1Y, scoreP)
+
+        // Divider
+        val divY = contentTop + pad + rowH + pad * 0.3f
+        canvas.drawLine(boxX + pad, divY, boxX + boxW - pad, divY, divP)
+
+        // Row 2
+        val r2Y = divY + pad * 0.5f + rowH * 0.6f
+        canvas.drawText(row2Name, boxX + pad, r2Y, teamP)
+        if (row2Serving) {
+            val nameW2 = teamP.measureText(row2Name)
+            val ballR = 3f * s
+            val b2X = boxX + pad + nameW2 + 6f * s
+            canvas.drawCircle(b2X, r2Y - 3f * s, ballR, ballP)
+            if (!isSingles && serverNum >= 2) canvas.drawCircle(b2X + ballR * 2.5f, r2Y - 3f * s, ballR, ballP)
+        }
+        canvas.drawText("$row2Score", boxX + boxW - pad, r2Y, scoreP)
+
+        // Score summary below box
+        val sScore = if (row1Serving) match.scoreLeft else match.scoreRight
+        val rScore = if (row1Serving) match.scoreRight else match.scoreLeft
+        val sumP = Paint().apply { color = Color.parseColor("#94A3B8"); textSize = 12f * s; isAntiAlias = true; typeface = Typeface.DEFAULT_BOLD }
+        val scoreText = if (isSingles) "$sScore-$rScore" else "$sScore-$rScore-${match.serverNum}"
+        canvas.drawText(scoreText, boxX + pad, boxY + boxH + 14f * s, sumP)
+
+        // ═══════════════════════════════════════
+        // LOGOS
+        // ═══════════════════════════════════════
+        drawLogos(canvas, width, height, s, margin)
+
+        // ═══════════════════════════════════════
+        // MARQUEE TEXT — bottom of screen
+        // ═══════════════════════════════════════
+        drawMarquee(canvas, width, height, s)
+    }
+
+    private fun drawLogos(canvas: Canvas, width: Int, height: Int, s: Float, margin: Float) {
+        val logoPaint = Paint().apply { isAntiAlias = true; isFilterBitmap = true; isDither = true }
+
+        // Top-right logos (horizontal from right, 81px)
+        val activeTopLogos = if (topRightLogos.isNotEmpty()) topRightLogos else listOfNotNull(pickbaseLogo)
+        var topLogoX = width.toFloat() - margin
+        for (logo in activeTopLogos.reversed()) {
+            val logoH = 81f * s
+            val logoW = logoH * logo.width / logo.height
+            topLogoX -= logoW
+            canvas.drawBitmap(logo, null, RectF(topLogoX, margin, topLogoX + logoW, margin + logoH), logoPaint)
+            topLogoX -= 10f * s
+        }
+
+        // Bottom-right logos (horizontal from right, 65px)
+        val activeBottomLogos = if (bottomRightLogos.isNotEmpty()) bottomRightLogos else listOfNotNull(tournamentLogo)
+        var bottomLogoX = width.toFloat() - margin
+        val bottomLogoY = height - 50f * s - 65f * s
+        for (logo in activeBottomLogos.reversed()) {
+            val tLogoH = 65f * s
+            val tLogoW = tLogoH * logo.width / logo.height
+            bottomLogoX -= tLogoW
+            canvas.drawBitmap(logo, null, RectF(bottomLogoX, bottomLogoY, bottomLogoX + tLogoW, bottomLogoY + tLogoH), logoPaint)
+            bottomLogoX -= 10f * s
+        }
+    }
+
+    private fun drawMarquee(canvas: Canvas, width: Int, height: Int, s: Float) {
+        if (marqueeTexts.isEmpty()) return
+
+        val barH = 28f * s
+        val barY = height - barH
+        val barBg = Paint().apply { color = Color.parseColor("#CC000000"); style = Paint.Style.FILL }
+        canvas.drawRect(0f, barY, width.toFloat(), height.toFloat(), barBg)
+
+        val textP = Paint().apply {
+            color = Color.WHITE; textSize = 16f * s; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true
+        }
+
+        val separator = "     ★     "
+        val fullText = marqueeTexts.joinToString(separator)
+        val textWidth = textP.measureText(fullText + separator)
+
+        val textY = barY + barH * 0.7f
+        canvas.drawText(fullText + separator + fullText, -marqueeOffset, textY, textP)
+
+        marqueeOffset += 3f * s
+        if (marqueeOffset >= textWidth) marqueeOffset = 0f
     }
 
     fun drawPaused(canvas: Canvas, width: Int, height: Int, match: MatchState) {
         draw(canvas, width, height, match)
-        val bannerH = height * 0.12f
+
+        // If pause image is configured, show it centered
+        pauseImage?.let { img ->
+            val s = height / 720f
+            val imgW = width * 0.70f
+            val imgH = imgW * img.height / img.width
+            val imgX = (width - imgW) / 2f
+            val imgY = (height - imgH) / 2f - 50f * s
+            val logoPaint = Paint().apply { isAntiAlias = true; isFilterBitmap = true }
+            canvas.drawBitmap(img, null, RectF(imgX, imgY, imgX + imgW, imgY + imgH), logoPaint)
+            // "TIME OUT" text below image
+            val tp = Paint().apply { color = Color.parseColor("#FACC15"); textSize = 44f * s; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true; textAlign = Paint.Align.CENTER; setShadowLayer(4f * s, 0f, 2f * s, Color.BLACK) }
+            canvas.drawText("TIME OUT", width / 2f, imgY + imgH + 40f * s, tp)
+            return
+        }
+
+        // Fallback: text banner
+        val bannerH = height * 0.10f
         val bannerY = (height - bannerH) / 2f
         val bp = Paint().apply { color = Color.parseColor("#E0000000"); style = Paint.Style.FILL }
         canvas.drawRect(0f, bannerY, width.toFloat(), bannerY + bannerH, bp)
         val tp = Paint().apply { color = Color.parseColor("#FACC15"); textSize = bannerH * 0.45f; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true; textAlign = Paint.Align.CENTER }
-        canvas.drawText("TAM DUNG", width / 2f, bannerY + bannerH * 0.65f, tp)
+        canvas.drawText("TIME OUT", width / 2f, bannerY + bannerH * 0.65f, tp)
+    }
+
+    /** Draw only logos + marquee (when no match data yet) */
+    fun drawLogosOnly(canvas: Canvas, width: Int, height: Int) {
+        val s = height / 720f
+        val margin = 12f * s
+        drawLogos(canvas, width, height, s, margin)
+        drawMarquee(canvas, width, height, s)
     }
 }
-

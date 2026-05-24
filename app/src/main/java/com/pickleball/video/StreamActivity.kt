@@ -74,6 +74,7 @@ class StreamActivity : AppCompatActivity() {
             runOnUiThread { statusText.text = status }
         }
         streamManager?.init(courtName, cameraId)
+        streamManager?.loadOverlayConfig(apiBase, tournamentId)
 
         openGlView.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {

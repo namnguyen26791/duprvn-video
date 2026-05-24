@@ -104,6 +104,69 @@ class StreamManager(
         this.courtName = courtName
         this.selectedCameraId = cameraId
         rtmpCamera = RtmpCamera2(openGlView, this)
+        loadPickbaseLogo()
+    }
+
+    /** Load PickBase logo from drawable */
+    private fun loadPickbaseLogo() {
+        try {
+            ScoreboardOverlay.pickbaseLogo = BitmapFactory.decodeResource(context.resources,
+                context.resources.getIdentifier("pickbase", "drawable", context.packageName))
+        } catch (e: Exception) {
+            android.util.Log.w("PB_VIDEO", "Failed to load pickbase logo: ${e.message}")
+        }
+    }
+
+    /** Load overlay config from API (logos + marquee) */
+    fun loadOverlayConfig(apiBase: String, tournamentId: Int) {
+        Thread {
+            try {
+                val api = asia.pickbase.video.data.ApiService.create(apiBase)
+                val config = kotlinx.coroutines.runBlocking { api.getOverlayConfig(tournamentId) }
+
+                // Load logos from config
+                config.logos.filter { it.position == "top_right" }.firstOrNull()?.let { logo ->
+                    loadImageFromUrl(logo.url) { bmp -> ScoreboardOverlay.pickbaseLogo = bmp }
+                }
+                config.logos.filter { it.position == "bottom_right" }.firstOrNull()?.let { logo ->
+                    loadImageFromUrl(logo.url) { bmp -> ScoreboardOverlay.tournamentLogo = bmp }
+                }
+
+                // Set marquee texts
+                if (config.marquee_texts.isNotEmpty()) {
+                    ScoreboardOverlay.marqueeTexts = config.marquee_texts
+                }
+                android.util.Log.d("PB_VIDEO", "Overlay config loaded: ${config.logos.size} logos, ${config.marquee_texts.size} texts")
+            } catch (e: Exception) {
+                android.util.Log.w("PB_VIDEO", "Failed to load overlay config: ${e.message}")
+            }
+        }.start()
+    }
+
+    private fun loadImageFromUrl(imageUrl: String, onLoaded: (Bitmap) -> Unit) {
+        try {
+            val url = java.net.URL(imageUrl)
+            val connection = url.openConnection()
+            if (connection is javax.net.ssl.HttpsURLConnection) {
+                val trustAll = arrayOf<javax.net.ssl.TrustManager>(object : javax.net.ssl.X509TrustManager {
+                    override fun checkClientTrusted(chain: Array<out java.security.cert.X509Certificate>?, authType: String?) {}
+                    override fun checkServerTrusted(chain: Array<out java.security.cert.X509Certificate>?, authType: String?) {}
+                    override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
+                })
+                val sslCtx = javax.net.ssl.SSLContext.getInstance("TLS")
+                sslCtx.init(null, trustAll, java.security.SecureRandom())
+                connection.sslSocketFactory = sslCtx.socketFactory
+                connection.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
+            }
+            connection.connectTimeout = 5000
+            connection.readTimeout = 5000
+            val input = connection.getInputStream()
+            val bitmap = BitmapFactory.decodeStream(input)
+            input.close()
+            if (bitmap != null) onLoaded(bitmap)
+        } catch (e: Exception) {
+            android.util.Log.w("PB_VIDEO", "Failed to load image: $imageUrl - ${e.message}")
+        }
     }
 
     fun updateMatch(match: MatchState?) {

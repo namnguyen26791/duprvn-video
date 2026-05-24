@@ -25,6 +25,30 @@ import asia.pickbase.video.stream.StreamManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+private fun loadBitmapFromUrl(imageUrl: String): android.graphics.Bitmap? {
+    return try {
+        val url = java.net.URL(imageUrl)
+        val connection = url.openConnection()
+        if (connection is javax.net.ssl.HttpsURLConnection) {
+            val trustAll = arrayOf<javax.net.ssl.TrustManager>(object : javax.net.ssl.X509TrustManager {
+                override fun checkClientTrusted(chain: Array<out java.security.cert.X509Certificate>?, authType: String?) {}
+                override fun checkServerTrusted(chain: Array<out java.security.cert.X509Certificate>?, authType: String?) {}
+                override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
+            })
+            val sslCtx = javax.net.ssl.SSLContext.getInstance("TLS")
+            sslCtx.init(null, trustAll, java.security.SecureRandom())
+            connection.sslSocketFactory = sslCtx.socketFactory
+            connection.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
+        }
+        connection.connectTimeout = 5000
+        connection.readTimeout = 5000
+        val input = connection.getInputStream()
+        val bmp = android.graphics.BitmapFactory.decodeStream(input)
+        input.close()
+        bmp
+    } catch (_: Exception) { null }
+}
+
 @Composable
 fun VideoApp() {
     var apiBase by remember { mutableStateOf(BuildConfig.API_BASE) }
@@ -189,6 +213,28 @@ fun VideoApp() {
                                             scope.launch {
                                                 try {
                                                     streamConfig = ApiService.create(apiBase).getStreamConfig(t.id)
+                                                    // Pre-load overlay config (logos + marquee)
+                                                    try {
+                                                        val overlay = ApiService.create(apiBase).getOverlayConfig(t.id)
+                                                        val topLogos = overlay.logos.filter { it.position == "top_right" }
+                                                        val bottomLogos = overlay.logos.filter { it.position == "bottom_right" }
+                                                        // Load all logos on IO thread
+                                                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                                            val topBitmaps = topLogos.mapNotNull { loadBitmapFromUrl(it.url) }
+                                                            val bottomBitmaps = bottomLogos.mapNotNull { loadBitmapFromUrl(it.url) }
+                                                            asia.pickbase.video.overlay.ScoreboardOverlay.topRightLogos = topBitmaps
+                                                            asia.pickbase.video.overlay.ScoreboardOverlay.bottomRightLogos = bottomBitmaps
+                                                        }
+                                                        if (overlay.marquee_texts.isNotEmpty()) {
+                                                            asia.pickbase.video.overlay.ScoreboardOverlay.marqueeTexts = overlay.marquee_texts
+                                                        }
+                                                        // Load pause image if configured
+                                                        overlay.logos.firstOrNull { it.position == "pause" }?.let { pauseLogo ->
+                                                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                                                asia.pickbase.video.overlay.ScoreboardOverlay.pauseImage = loadBitmapFromUrl(pauseLogo.url)
+                                                            }
+                                                        }
+                                                    } catch (_: Exception) {}
                                                     step = 2
                                                 } catch (e: Exception) { error = "Lỗi: ${e.message}" }
                                                 loading = false
