@@ -12,8 +12,8 @@ android {
         applicationId = "asia.pickbase.video"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.0.1"
+        versionCode = 9
+        versionName = "1.1.0"
 
         // Firebase + API config from build
         buildConfigField("String", "API_BASE", "\"https://api.pickbase.asia/api\"")
