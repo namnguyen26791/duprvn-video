@@ -15,6 +15,7 @@ import asia.pickbase.video.data.ApiService
 import asia.pickbase.video.data.DeviceStatusRequest
 import asia.pickbase.video.data.FirebaseMatchListener
 import asia.pickbase.video.stream.StreamManager
+import asia.pickbase.video.stream.StreamQuality
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -47,6 +48,8 @@ class StreamActivity : AppCompatActivity() {
         tournamentId = intent.getIntExtra("tournament_id", 0)
         courtName = intent.getStringExtra("court_name") ?: "Sân"
         val cameraId = intent.getStringExtra("camera_id") ?: "0"
+        val qualityName = intent.getStringExtra("stream_quality") ?: "Q_1080P"
+        val quality = try { StreamQuality.valueOf(qualityName) } catch (_: Exception) { StreamQuality.Q_1080P }
 
         val root = FrameLayout(this)
         root.setBackgroundColor(Color.BLACK)
@@ -73,6 +76,7 @@ class StreamActivity : AppCompatActivity() {
         streamManager = StreamManager(this, openGlView) { status ->
             runOnUiThread { statusText.text = status }
         }
+        streamManager?.selectedQuality = quality
         streamManager?.init(courtName, cameraId)
         streamManager?.loadOverlayConfig(apiBase, tournamentId)
 

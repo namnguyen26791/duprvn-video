@@ -22,6 +22,7 @@ import androidx.compose.ui.res.painterResource
 import asia.pickbase.video.data.*
 import asia.pickbase.video.stream.CameraInfo
 import asia.pickbase.video.stream.StreamManager
+import asia.pickbase.video.stream.StreamQuality
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -68,10 +69,15 @@ fun VideoApp() {
     // Camera selection
     var backCameras by remember { mutableStateOf<List<CameraInfo>>(emptyList()) }
     var selectedCameraId by remember { mutableStateOf("0") }
+    var selectedQuality by remember { mutableStateOf(StreamQuality.Q_1080P) }
+    var supportedQualities by remember { mutableStateOf<List<StreamQuality>>(StreamQuality.all()) }
     
     LaunchedEffect(Unit) {
         backCameras = StreamManager.getBackCameras(context)
         if (backCameras.isNotEmpty()) selectedCameraId = backCameras.first().id
+        supportedQualities = StreamQuality.getSupportedQualities()
+        // Default chọn chất lượng cao nhất mà máy hỗ trợ
+        if (supportedQualities.isNotEmpty()) selectedQuality = supportedQualities.first()
     }
 
     // Step 3: Poll court matches, auto-launch when a match starts playing
@@ -103,6 +109,7 @@ fun VideoApp() {
                             putExtra("tournament_id", tid as Int)
                             putExtra("court_name", court)
                             putExtra("camera_id", selectedCameraId)
+                            putExtra("stream_quality", selectedQuality.name)
                         }
                         context.startActivity(intent)
                     }
@@ -164,6 +171,54 @@ fun VideoApp() {
                                 }
                             }
                         }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Quality selector
+                        Text("Chất lượng stream", fontSize = 14.sp, color = Color.Gray)
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            StreamQuality.all().forEach { q ->
+                                val isSelected = selectedQuality == q
+                                val isSupported = supportedQualities.contains(q)
+                                Card(
+                                    modifier = Modifier.fillMaxWidth().clickable(enabled = isSupported) {
+                                        if (isSupported) selectedQuality = q
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = when {
+                                            !isSupported -> Color(0xFFF1F5F9)
+                                            isSelected -> Color(0xFFDBEAFE)
+                                            else -> MaterialTheme.colorScheme.surface
+                                        }
+                                    ),
+                                ) {
+                                    Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                q.label,
+                                                fontSize = 13.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (isSupported) Color.Unspecified else Color(0xFF94A3B8),
+                                            )
+                                            Text(
+                                                "${q.width}x${q.height} · ${q.bitrate / 1024 / 1024}Mbps",
+                                                fontSize = 11.sp,
+                                                color = if (isSupported) Color(0xFF64748B) else Color(0xFFCBD5E1),
+                                            )
+                                        }
+                                        when {
+                                            !isSupported -> Text("✗ Không hỗ trợ", fontSize = 11.sp, color = Color(0xFFEF4444))
+                                            isSelected -> Text("✓", color = Color(0xFF2563EB), fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Text("Tự động phát hiện phần cứng · fallback nếu cần", fontSize = 11.sp, color = Color(0xFF94A3B8))
 
                         Spacer(modifier = Modifier.height(8.dp))
                         if (error != null) Text(error!!, color = Color.Red, fontSize = 12.sp)
