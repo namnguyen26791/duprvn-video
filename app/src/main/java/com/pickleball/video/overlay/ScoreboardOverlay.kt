@@ -31,10 +31,11 @@ object ScoreboardOverlay {
         // SCOREBOARD — TOP-LEFT (compact, with tournament name attached)
         // ═══════════════════════════════════════
         val rowH = 28f * s
-        val boxW = width * 0.34f
+        val boxW = width * 0.23f
 
-        val row1Name = match.left.teamName
-        val row2Name = match.right.teamName
+        val teamP = Paint().apply { color = Color.WHITE; textSize = 16f * s; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true }
+        val row1Name = shortenName(match.left.teamName, teamP, boxW - pad * 2 - 40f * s)
+        val row2Name = shortenName(match.right.teamName, teamP, boxW - pad * 2 - 40f * s)
         val row1Score = match.scoreLeft
         val row2Score = match.scoreRight
         val row1Serving = match.serve == "left"
@@ -71,10 +72,11 @@ object ScoreboardOverlay {
             }
             canvas.drawPath(headerPath, headerBg)
             val labelP = Paint().apply { color = Color.WHITE; textSize = 11f * s; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true }
-            canvas.drawText(topLabel, boxX + pad, boxY + headerH - 6f * s, labelP)
+            val maxLabelW = boxW - pad * 2
+            val truncatedLabel = truncateText(topLabel, labelP, maxLabelW)
+            canvas.drawText(truncatedLabel, boxX + pad, boxY + headerH - 6f * s, labelP)
         }
 
-        val teamP = Paint().apply { color = Color.WHITE; textSize = 16f * s; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true }
         val scoreP = Paint().apply { color = Color.WHITE; textSize = 22f * s; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true; textAlign = Paint.Align.RIGHT }
         val ballP = Paint().apply { color = Color.parseColor("#FACC15"); style = Paint.Style.FILL; isAntiAlias = true }
         val divP = Paint().apply { color = Color.parseColor("#444444"); strokeWidth = 1f * s }
@@ -128,28 +130,40 @@ object ScoreboardOverlay {
     }
 
     private fun drawLogos(canvas: Canvas, width: Int, height: Int, s: Float, margin: Float) {
-        val logoPaint = Paint().apply { isAntiAlias = true; isFilterBitmap = true; isDither = true }
+        val logoPaint = Paint().apply {
+            isAntiAlias = true
+            isFilterBitmap = true
+            isDither = true
+        }
 
-        // Top-right logos (horizontal from right, 81px)
+        // Top-right logos (horizontal from right)
         val activeTopLogos = if (topRightLogos.isNotEmpty()) topRightLogos else listOfNotNull(pickbaseLogo)
         var topLogoX = width.toFloat() - margin
         for (logo in activeTopLogos.reversed()) {
-            val logoH = 81f * s
-            val logoW = logoH * logo.width / logo.height
+            val logoH = (81f * s).toInt()
+            val logoW = (logoH.toFloat() * logo.width / logo.height).toInt()
+            val scaled = if (logo.width < logoW * 2) {
+                Bitmap.createScaledBitmap(logo, logoW, logoH, true)
+            } else logo
             topLogoX -= logoW
-            canvas.drawBitmap(logo, null, RectF(topLogoX, margin, topLogoX + logoW, margin + logoH), logoPaint)
+            val dst = RectF(topLogoX, margin, topLogoX + logoW, margin + logoH.toFloat())
+            canvas.drawBitmap(scaled, null, dst, logoPaint)
             topLogoX -= 10f * s
         }
 
-        // Bottom-right logos (horizontal from right, 65px)
+        // Bottom-right logos (horizontal from right)
         val activeBottomLogos = if (bottomRightLogos.isNotEmpty()) bottomRightLogos else listOfNotNull(tournamentLogo)
         var bottomLogoX = width.toFloat() - margin
         val bottomLogoY = height - 50f * s - 65f * s
         for (logo in activeBottomLogos.reversed()) {
-            val tLogoH = 65f * s
-            val tLogoW = tLogoH * logo.width / logo.height
+            val tLogoH = (65f * s).toInt()
+            val tLogoW = (tLogoH.toFloat() * logo.width / logo.height).toInt()
+            val scaled = if (logo.width < tLogoW * 2) {
+                Bitmap.createScaledBitmap(logo, tLogoW, tLogoH, true)
+            } else logo
             bottomLogoX -= tLogoW
-            canvas.drawBitmap(logo, null, RectF(bottomLogoX, bottomLogoY, bottomLogoX + tLogoW, bottomLogoY + tLogoH), logoPaint)
+            val dst = RectF(bottomLogoX, bottomLogoY, bottomLogoX + tLogoW, bottomLogoY + tLogoH.toFloat())
+            canvas.drawBitmap(scaled, null, dst, logoPaint)
             bottomLogoX -= 10f * s
         }
     }
@@ -210,5 +224,69 @@ object ScoreboardOverlay {
         val margin = 12f * s
         drawLogos(canvas, width, height, s, margin)
         drawMarquee(canvas, width, height, s)
+    }
+
+    /**
+     * Cắt text + thêm "…" nếu vượt quá maxWidth.
+     */
+    private fun truncateText(text: String, paint: Paint, maxWidth: Float): String {
+        if (paint.measureText(text) <= maxWidth) return text
+        val ellipsis = "…"
+        val ellipsisW = paint.measureText(ellipsis)
+        for (i in text.length - 1 downTo 0) {
+            if (paint.measureText(text, 0, i) + ellipsisW <= maxWidth) {
+                return text.substring(0, i).trimEnd() + ellipsis
+            }
+        }
+        return ellipsis
+    }
+
+    /**
+     * Viết tắt tên VĐV nếu quá dài cho scoreboard.
+     * Giữ nguyên họ (từ đầu) + tên (từ cuối), viết tắt các từ giữa.
+     * VD: "Nguyễn Văn Quân Khôi Nam" → "Nguyễn V. Q. K. Nam"
+     * 
+     * Với teamName dạng "Tên1 - Tên2" (đôi), xử lý từng tên riêng.
+     */
+    private fun shortenName(fullName: String, paint: Paint, maxWidth: Float): String {
+        if (paint.measureText(fullName) <= maxWidth) return fullName
+
+        // Đôi: "A - B"
+        if (fullName.contains(" - ")) {
+            val parts = fullName.split(" - ", limit = 2)
+            val shortened = parts.joinToString(" - ") { shortenSingleName(it.trim()) }
+            if (paint.measureText(shortened) <= maxWidth) return shortened
+            // Vẫn dài quá → viết tắt mạnh hơn
+            return parts.joinToString(" - ") { shortenSingleNameAggressive(it.trim()) }
+        }
+
+        val shortened = shortenSingleName(fullName)
+        if (paint.measureText(shortened) <= maxWidth) return shortened
+        return shortenSingleNameAggressive(fullName)
+    }
+
+    /**
+     * Viết tắt các từ giữa (giữ họ + tên cuối).
+     * "Nguyễn Văn Quân Khôi Nam" → "Nguyễn V. Q. K. Nam"
+     */
+    private fun shortenSingleName(name: String): String {
+        val words = name.trim().split("\\s+".toRegex())
+        if (words.size <= 2) return name
+        val first = words.first()
+        val last = words.last()
+        val middle = words.subList(1, words.size - 1).joinToString(" ") { "${it.first()}." }
+        return "$first $middle $last"
+    }
+
+    /**
+     * Viết tắt mạnh: chỉ giữ họ viết tắt + tên cuối.
+     * "Nguyễn Văn Quân Khôi Nam" → "N. V. Q. K. Nam"
+     */
+    private fun shortenSingleNameAggressive(name: String): String {
+        val words = name.trim().split("\\s+".toRegex())
+        if (words.size <= 1) return name
+        val last = words.last()
+        val initials = words.subList(0, words.size - 1).joinToString(" ") { "${it.first()}." }
+        return "$initials $last"
     }
 }

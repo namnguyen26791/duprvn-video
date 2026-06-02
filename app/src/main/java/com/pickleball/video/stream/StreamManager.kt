@@ -16,11 +16,11 @@ import asia.pickbase.video.overlay.ScoreboardOverlay
 
 data class CameraInfo(val id: String, val label: String, val focalLength: Float)
 
-enum class StreamQuality(val width: Int, val height: Int, val bitrate: Int, val label: String) {
-    Q_4K(3840, 2160, 15000 * 1024, "4K"),
-    Q_2K(2560, 1440, 8000 * 1024, "2K"),
-    Q_1080P(1920, 1080, 4500 * 1024, "1080p"),
-    Q_720P(1280, 720, 2500 * 1024, "720p");
+enum class StreamQuality(val width: Int, val height: Int, val bitrate: Int, val fps: Int, val label: String) {
+    Q_4K(3840, 2160, 20000 * 1024, 30, "4K"),
+    Q_2K(2560, 1440, 10000 * 1024, 30, "2K"),
+    Q_1080P(1920, 1080, 6000 * 1024, 30, "1080p"),
+    Q_720P(1280, 720, 4500 * 1024, 30, "720p");
 
     companion object {
         fun all() = values().toList()
@@ -291,7 +291,7 @@ class StreamManager(
         val startIndex = qualities.indexOf(selectedQuality)
         for (i in startIndex until qualities.size) {
             val q = qualities[i]
-            if (camera.prepareVideo(q.width, q.height, 30, q.bitrate, 0) &&
+            if (camera.prepareVideo(q.width, q.height, q.fps, q.bitrate, 0) &&
                 camera.prepareAudio(128 * 1024, 44100, true)) {
                 if (q != selectedQuality) {
                     onStatusChange("⚠️ ${selectedQuality.label} không hỗ trợ, dùng ${q.label}")
@@ -391,23 +391,38 @@ class StreamManager(
     }
     override fun onNewBitrateRtmp(bitrate: Long) {
         val q = actualQuality ?: return
-        val targetBitrate = q.bitrate.toLong()
+        val currentBitrate = rtmpCamera?.getBitrate()?.toLong() ?: q.bitrate.toLong()
+        val minBitrate = 1500L * 1024 // min 1.5Mbps, dưới mức này thì chịu
 
-        if (bitrate < targetBitrate * 0.6) {
+        if (bitrate < currentBitrate * 0.6) {
             // Mạng yếu
             lowBitrateCount++
             highBitrateCount = 0
-            if (lowBitrateCount >= LOW_BITRATE_THRESHOLD && q != StreamQuality.Q_720P) {
+            if (lowBitrateCount >= LOW_BITRATE_THRESHOLD) {
                 lowBitrateCount = 0
-                downgradeQuality()
+                // Giảm 30% bitrate hiện tại
+                val newBitrate = (currentBitrate * 0.7).toLong().coerceAtLeast(minBitrate)
+                if (newBitrate < minBitrate) return // không giảm dưới min
+                rtmpCamera?.setVideoBitrateOnFly(newBitrate.toInt())
+                val mbps = String.format("%.1f", newBitrate.toFloat() / 1024 / 1024)
+                onStatusChange("⚠️ Mạng yếu → ${mbps}Mbps")
+                android.util.Log.w("PB_VIDEO", "Adaptive: reduce bitrate to ${newBitrate / 1024}kbps")
             }
-        } else if (bitrate > targetBitrate * 0.9) {
-            // Mạng ổn định — thử tăng lại
+        } else if (bitrate > currentBitrate * 0.9) {
+            // Mạng ổn — thử tăng lại
             highBitrateCount++
             lowBitrateCount = 0
-            if (highBitrateCount >= HIGH_BITRATE_THRESHOLD && q != selectedQuality) {
+            if (highBitrateCount >= HIGH_BITRATE_THRESHOLD) {
                 highBitrateCount = 0
-                upgradeQuality()
+                val targetBitrate = q.bitrate.toLong()
+                if (currentBitrate < targetBitrate) {
+                    // Tăng 20% nhưng không vượt target
+                    val newBitrate = (currentBitrate * 1.2).toLong().coerceAtMost(targetBitrate)
+                    rtmpCamera?.setVideoBitrateOnFly(newBitrate.toInt())
+                    val mbps = String.format("%.1f", newBitrate.toFloat() / 1024 / 1024)
+                    onStatusChange("🔴 Mạng ổn → ${mbps}Mbps")
+                    android.util.Log.d("PB_VIDEO", "Adaptive: increase bitrate to ${newBitrate / 1024}kbps")
+                }
             }
         } else {
             lowBitrateCount = 0
@@ -417,40 +432,5 @@ class StreamManager(
     override fun onDisconnectRtmp() { onStatusChange("⚠️ Mất kết nối") }
     override fun onAuthErrorRtmp() { onStatusChange("❌ Auth error") }
     override fun onAuthSuccessRtmp() {}
-
-    /**
-     * Hạ bitrate xuống mức thấp hơn. Min là 720p.
-     */
-    private fun downgradeQuality() {
-        val current = actualQuality ?: return
-        val qualities = StreamQuality.all()
-        val currentIndex = qualities.indexOf(current)
-        val nextIndex = currentIndex + 1
-        if (nextIndex >= qualities.size) return
-
-        val next = qualities[nextIndex]
-        actualQuality = next
-        rtmpCamera?.setVideoBitrateOnFly(next.bitrate)
-        onStatusChange("⚠️ Mạng yếu → ${next.label}")
-        android.util.Log.w("PB_VIDEO", "Adaptive: downgrade ${current.label} → ${next.label}")
-    }
-
-    /**
-     * Tăng bitrate lên mức cao hơn khi mạng ổn định trở lại. Max là mức user đã chọn.
-     */
-    private fun upgradeQuality() {
-        val current = actualQuality ?: return
-        val qualities = StreamQuality.all()
-        val currentIndex = qualities.indexOf(current)
-        if (currentIndex <= 0) return
-        val targetIndex = qualities.indexOf(selectedQuality)
-        if (currentIndex <= targetIndex) return // đã ở mức user chọn rồi
-
-        val next = qualities[currentIndex - 1]
-        actualQuality = next
-        rtmpCamera?.setVideoBitrateOnFly(next.bitrate)
-        onStatusChange("🔴 Mạng ổn → ${next.label}")
-        android.util.Log.d("PB_VIDEO", "Adaptive: upgrade ${current.label} → ${next.label}")
-    }
 }
 
