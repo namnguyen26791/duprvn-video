@@ -31,7 +31,7 @@ object ScoreboardOverlay {
         // SCOREBOARD — TOP-LEFT (compact, with tournament name attached)
         // ═══════════════════════════════════════
         val rowH = 28f * s
-        val boxW = width * 0.23f
+        val boxW = width * 0.28f
 
         val teamP = Paint().apply { color = Color.WHITE; textSize = 16f * s; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true }
         val row1Name = shortenName(match.left.teamName, teamP, boxW - pad * 2 - 40f * s)
