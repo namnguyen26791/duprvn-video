@@ -1,4 +1,4 @@
-package asia.pickbase.video.data
+package vn.vdpr.video.data
 
 /** Match state from Firebase — mirrors what Referee app writes */
 data class TeamSide(

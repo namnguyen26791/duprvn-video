@@ -1,4 +1,4 @@
-package asia.pickbase.video
+package vn.vdpr.video
 
 import android.app.Application
 import android.util.Log

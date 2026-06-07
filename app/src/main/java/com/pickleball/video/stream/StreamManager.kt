@@ -1,4 +1,4 @@
-package asia.pickbase.video.stream
+package vn.vdpr.video.stream
 
 import android.content.Context
 import android.graphics.*
@@ -11,8 +11,8 @@ import com.pedro.encoder.utils.gl.TranslateTo
 import com.pedro.rtmp.utils.ConnectCheckerRtmp
 import com.pedro.rtplibrary.rtmp.RtmpCamera2
 import com.pedro.rtplibrary.view.OpenGlView
-import asia.pickbase.video.data.MatchState
-import asia.pickbase.video.overlay.ScoreboardOverlay
+import vn.vdpr.video.data.MatchState
+import vn.vdpr.video.overlay.ScoreboardOverlay
 
 data class CameraInfo(val id: String, val label: String, val focalLength: Float)
 
@@ -175,7 +175,7 @@ class StreamManager(
     fun loadOverlayConfig(apiBase: String, tournamentId: Int) {
         Thread {
             try {
-                val api = asia.pickbase.video.data.ApiService.create(apiBase)
+                val api = vn.vdpr.video.data.ApiService.create(apiBase)
                 val config = kotlinx.coroutines.runBlocking { api.getOverlayConfig(tournamentId) }
 
                 // Load logos from config

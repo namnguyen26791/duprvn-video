@@ -1,7 +1,7 @@
-package asia.pickbase.video.overlay
+package vn.vdpr.video.overlay
 
 import android.graphics.*
-import asia.pickbase.video.data.MatchState
+import vn.vdpr.video.data.MatchState
 
 /**
  * Overlay layout:

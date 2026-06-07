@@ -1,4 +1,4 @@
-package asia.pickbase.video
+package vn.vdpr.video
 
 import android.content.Intent
 import androidx.compose.foundation.Image
@@ -19,10 +19,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.painterResource
-import asia.pickbase.video.data.*
-import asia.pickbase.video.stream.CameraInfo
-import asia.pickbase.video.stream.StreamManager
-import asia.pickbase.video.stream.StreamQuality
+import vn.vdpr.video.data.*
+import vn.vdpr.video.stream.CameraInfo
+import vn.vdpr.video.stream.StreamManager
+import vn.vdpr.video.stream.StreamQuality
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -277,16 +277,16 @@ fun VideoApp() {
                                                         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                                                             val topBitmaps = topLogos.mapNotNull { loadBitmapFromUrl(it.url) }
                                                             val bottomBitmaps = bottomLogos.mapNotNull { loadBitmapFromUrl(it.url) }
-                                                            asia.pickbase.video.overlay.ScoreboardOverlay.topRightLogos = topBitmaps
-                                                            asia.pickbase.video.overlay.ScoreboardOverlay.bottomRightLogos = bottomBitmaps
+                                                            vn.vdpr.video.overlay.ScoreboardOverlay.topRightLogos = topBitmaps
+                                                            vn.vdpr.video.overlay.ScoreboardOverlay.bottomRightLogos = bottomBitmaps
                                                         }
                                                         if (overlay.marquee_texts.isNotEmpty()) {
-                                                            asia.pickbase.video.overlay.ScoreboardOverlay.marqueeTexts = overlay.marquee_texts
+                                                            vn.vdpr.video.overlay.ScoreboardOverlay.marqueeTexts = overlay.marquee_texts
                                                         }
                                                         // Load pause image if configured
                                                         overlay.logos.firstOrNull { it.position == "pause" }?.let { pauseLogo ->
                                                             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                                                asia.pickbase.video.overlay.ScoreboardOverlay.pauseImage = loadBitmapFromUrl(pauseLogo.url)
+                                                                vn.vdpr.video.overlay.ScoreboardOverlay.pauseImage = loadBitmapFromUrl(pauseLogo.url)
                                                             }
                                                         }
                                                     } catch (_: Exception) {}

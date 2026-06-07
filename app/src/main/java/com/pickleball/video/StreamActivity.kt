@@ -1,4 +1,4 @@
-package asia.pickbase.video
+package vn.vdpr.video
 
 import android.graphics.Color
 import android.os.BatteryManager
@@ -11,11 +11,11 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.pedro.rtplibrary.view.OpenGlView
-import asia.pickbase.video.data.ApiService
-import asia.pickbase.video.data.DeviceStatusRequest
-import asia.pickbase.video.data.FirebaseMatchListener
-import asia.pickbase.video.stream.StreamManager
-import asia.pickbase.video.stream.StreamQuality
+import vn.vdpr.video.data.ApiService
+import vn.vdpr.video.data.DeviceStatusRequest
+import vn.vdpr.video.data.FirebaseMatchListener
+import vn.vdpr.video.stream.StreamManager
+import vn.vdpr.video.stream.StreamQuality
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 

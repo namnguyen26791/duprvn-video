@@ -1,4 +1,4 @@
-package asia.pickbase.video.data
+package vn.vdpr.video.data
 
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory

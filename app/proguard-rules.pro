@@ -34,7 +34,7 @@
 # ============================================
 # App data models (Gson serialization)
 # ============================================
--keep class asia.pickbase.video.data.** { *; }
+-keep class vn.vdpr.video.data.** { *; }
 
 # ============================================
 # Kotlin

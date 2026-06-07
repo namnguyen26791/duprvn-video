@@ -1,21 +1,21 @@
 {
   "project_info": {
-    "project_number": "702630810268",
-    "project_id": "vdpr-45c0e",
-    "storage_bucket": "vdpr-45c0e.firebasestorage.app",
-    "firebase_url": "https://vdpr-45c0e-default-rtdb.asia-southeast1.firebasedatabase.app"
+    "project_number": "28142542665",
+    "project_id": "vdpr-live-2b3b5",
+    "storage_bucket": "vdpr-live-2b3b5.firebasestorage.app",
+    "firebase_url": "https://vdpr-live-2b3b5-default-rtdb.asia-southeast1.firebasedatabase.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:702630810268:android:b51750f6ded8858c34d359",
+        "mobilesdk_app_id": "1:28142542665:web:9afa4cd48e27994aca4498",
         "android_client_info": {
-          "package_name": "asia.pickbase.video"
+          "package_name": "vn.vdpr.video"
         }
       },
       "api_key": [
         {
-          "current_key": "AIzaSyAHZJv-9djvXi6JXcw2OBFtERJ8XfQ3SfY"
+          "current_key": "AIzaSyCh1mQvWLL8-GGdbR1JFAww53dQlsGAWQo"
         }
       ],
       "services": {

@@ -5,19 +5,19 @@ plugins {
 }
 
 android {
-    namespace = "asia.pickbase.video"
+    namespace = "vn.vdpr.video"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "asia.pickbase.video"
+        applicationId = "vn.vdpr.video"
         minSdk = 26
         targetSdk = 35
         versionCode = 9
         versionName = "1.1.0"
 
         // Firebase + API config from build
-        buildConfigField("String", "API_BASE", "\"https://api.pickbase.asia/api\"")
-        buildConfigField("String", "FIREBASE_DB_URL", "\"https://vdpr-45c0e-default-rtdb.asia-southeast1.firebasedatabase.app\"")
+        buildConfigField("String", "API_BASE", "\"https://backend.vdpr.vn/api\"")
+        buildConfigField("String", "FIREBASE_DB_URL", "\"https://vdpr-live-2b3b5-default-rtdb.asia-southeast1.firebasedatabase.app\"")
     }
 
     signingConfigs {
