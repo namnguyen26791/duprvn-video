@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="firebase_database_url" translatable="false">https://vdpr-live-2b3b5-default-rtdb.asia-southeast1.firebasedatabase.app</string>
+    <string name="gcm_defaultSenderId" translatable="false">28142542665</string>
+    <string name="google_api_key" translatable="false">AIzaSyCh1mQvWLL8-GGdbR1JFAww53dQlsGAWQo</string>
+    <string name="google_app_id" translatable="false">1:28142542665:web:9afa4cd48e27994aca4498</string>
+    <string name="google_crash_reporting_api_key" translatable="false">AIzaSyCh1mQvWLL8-GGdbR1JFAww53dQlsGAWQo</string>
+    <string name="google_storage_bucket" translatable="false">vdpr-live-2b3b5.firebasestorage.app</string>
+    <string name="project_id" translatable="false">vdpr-live-2b3b5</string>
+</resources>

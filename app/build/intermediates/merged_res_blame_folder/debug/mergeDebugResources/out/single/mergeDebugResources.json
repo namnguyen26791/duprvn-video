@@ -1,0 +1,10 @@
+[
+    {
+        "merged": "vn.vdpr.video.app-debug-56:/drawable_logo.png.flat",
+        "source": "vn.vdpr.video.app-main-58:/drawable/logo.png"
+    },
+    {
+        "merged": "vn.vdpr.video.app-debug-56:/xml_network_security_config.xml.flat",
+        "source": "vn.vdpr.video.app-main-58:/xml/network_security_config.xml"
+    }
+]

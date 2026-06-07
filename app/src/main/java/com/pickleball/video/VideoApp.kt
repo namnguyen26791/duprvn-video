@@ -137,7 +137,7 @@ fun VideoApp() {
                     contentDescription = "PickBase",
                     modifier = Modifier.size(64.dp)
                 )
-                Text("PickBase Live", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text("VDPR Live", fontSize = 20.sp, fontWeight = FontWeight.Bold)
 
                 when (step) {
                     0 -> {

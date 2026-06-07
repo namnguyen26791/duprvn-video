@@ -13,7 +13,7 @@
     <application
         android:name=".App"
         android:allowBackup="true"
-        android:label="PickBase Live"
+        android:label="VDPR Live"
         android:icon="@drawable/logo"
         android:supportsRtl="true"
         android:networkSecurityConfig="@xml/network_security_config"
