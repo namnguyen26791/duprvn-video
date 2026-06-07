@@ -164,7 +164,7 @@ MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] C:\Users\na
 	android:supportsRtl
 		ADDED from C:\Users\nam.nguyen19\Documents\prj\pickleball\vdpr\duprvn-video\app\src\main\AndroidManifest.xml:18:9-35
 	android:label
-		ADDED from C:\Users\nam.nguyen19\Documents\prj\pickleball\vdpr\duprvn-video\app\src\main\AndroidManifest.xml:16:9-38
+		ADDED from C:\Users\nam.nguyen19\Documents\prj\pickleball\vdpr\duprvn-video\app\src\main\AndroidManifest.xml:16:9-34
 	android:keepScreenOn
 		ADDED from C:\Users\nam.nguyen19\Documents\prj\pickleball\vdpr\duprvn-video\app\src\main\AndroidManifest.xml:22:9-36
 	android:icon

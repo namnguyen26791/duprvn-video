@@ -1,0 +1,54 @@
+# Gradle
+.gradle/
+build/
+*/build/
+
+# Local configuration
+local.properties
+
+# Android Studio
+.idea/
+*.iml
+
+# Keystore
+# *.jks
+# *.keystore
+
+# Generated files
+captures/
+.externalNativeBuild/
+.cxx/
+
+# APK/AAB
+*.apk
+*.aab
+*.ap_
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Kotlin
+.kotlin/
+
+# NDK
+obj/
+
+# Firebase
+google-services.json
+# Nếu app public hoặc nhiều dev cùng dùng thì có thể commit file này.
+# Nếu chứa config riêng từng môi trường thì nên ignore.
+
+# Secrets
+secrets.properties
+.env
+.env.*
+
+# Crashlytics
+com_crashlytics_export_strings.xml
+
+# Android Studio cache
+.navigation/

@@ -63,7 +63,7 @@
 37        android:keepScreenOn="true"
 37-->C:\Users\nam.nguyen19\Documents\prj\pickleball\vdpr\duprvn-video\app\src\main\AndroidManifest.xml:22:9-36
 38        android:label="VDPR Live"
-38-->C:\Users\nam.nguyen19\Documents\prj\pickleball\vdpr\duprvn-video\app\src\main\AndroidManifest.xml:16:9-38
+38-->C:\Users\nam.nguyen19\Documents\prj\pickleball\vdpr\duprvn-video\app\src\main\AndroidManifest.xml:16:9-34
 39        android:networkSecurityConfig="@xml/network_security_config"
 39-->C:\Users\nam.nguyen19\Documents\prj\pickleball\vdpr\duprvn-video\app\src\main\AndroidManifest.xml:19:9-69
 40        android:supportsRtl="true"
