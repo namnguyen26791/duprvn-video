@@ -174,24 +174,49 @@ class StreamManager(
 
     /** Load overlay config from API (logos + marquee) */
     fun loadOverlayConfig(apiBase: String, tournamentId: Int) {
+        if (tournamentId <= 0) return
+        // Nếu đã có logos (load từ VideoApp) thì không ghi đè
+        if (ScoreboardOverlay.topRightLogos.isNotEmpty() || ScoreboardOverlay.bottomRightLogos.isNotEmpty()) {
+            android.util.Log.d("PB_VIDEO", "loadOverlayConfig: logos already loaded, skipping")
+            return
+        }
         Thread {
             try {
                 val api = vn.vdpr.video.data.ApiService.create(apiBase)
                 val config = kotlinx.coroutines.runBlocking { api.getOverlayConfig(tournamentId) }
 
-                // Load logos from config
-                config.logos.filter { it.position == "top_right" }.firstOrNull()?.let { logo ->
-                    loadImageFromUrl(logo.url) { bmp -> ScoreboardOverlay.pickbaseLogo = bmp }
+                // Load top-right logos
+                val topLogos = config.logos.filter { it.position == "top_right" }
+                val loadedTop = mutableListOf<Bitmap>()
+                for (logo in topLogos) {
+                    loadImageFromUrl(logo.url) { bmp -> loadedTop.add(bmp) }
                 }
-                config.logos.filter { it.position == "bottom_right" }.firstOrNull()?.let { logo ->
-                    loadImageFromUrl(logo.url) { bmp -> ScoreboardOverlay.tournamentLogo = bmp }
+                if (loadedTop.isNotEmpty()) {
+                    ScoreboardOverlay.topRightLogos = loadedTop
+                    ScoreboardOverlay.pickbaseLogo = loadedTop.first()
+                }
+
+                // Load bottom-right logos
+                val bottomLogos = config.logos.filter { it.position == "bottom_right" }
+                val loadedBottom = mutableListOf<Bitmap>()
+                for (logo in bottomLogos) {
+                    loadImageFromUrl(logo.url) { bmp -> loadedBottom.add(bmp) }
+                }
+                if (loadedBottom.isNotEmpty()) {
+                    ScoreboardOverlay.bottomRightLogos = loadedBottom
+                    ScoreboardOverlay.tournamentLogo = loadedBottom.first()
+                }
+
+                // Pause image
+                config.logos.firstOrNull { it.position == "pause" }?.let { logo ->
+                    loadImageFromUrl(logo.url) { bmp -> ScoreboardOverlay.pauseImage = bmp }
                 }
 
                 // Set marquee texts
                 if (config.marquee_texts.isNotEmpty()) {
                     ScoreboardOverlay.marqueeTexts = config.marquee_texts
                 }
-                android.util.Log.d("PB_VIDEO", "Overlay config loaded: ${config.logos.size} logos, ${config.marquee_texts.size} texts")
+                android.util.Log.d("PB_VIDEO", "Overlay config loaded: ${config.logos.size} logos, ${config.marquee_texts.size} texts, topRight=${loadedTop.size}, bottomRight=${loadedBottom.size}")
             } catch (e: Exception) {
                 android.util.Log.w("PB_VIDEO", "Failed to load overlay config: ${e.message}")
             }
@@ -232,13 +257,17 @@ class StreamManager(
     private fun setupFilter() {
         if (filterReady) return
         try {
+            val gl = rtmpCamera?.glInterface ?: return
+            // Only setup filter when GL context is actually ready (camera is previewing or streaming)
+            if (rtmpCamera?.isOnPreview != true && rtmpCamera?.isStreaming != true) return
             imageFilter = ImageObjectFilterRender()
-            rtmpCamera?.glInterface?.setFilter(imageFilter)
+            gl.setFilter(imageFilter)
             imageFilter?.setScale(100f, 100f) // full screen overlay
             imageFilter?.setPosition(TranslateTo.CENTER)
             filterReady = true
+            android.util.Log.i("PB_VIDEO", "setupFilter SUCCESS — overlay active")
         } catch (e: Exception) {
-            onStatusChange("⚠️ Filter error: ${e.message}")
+            android.util.Log.w("PB_VIDEO", "setupFilter failed (will retry): ${e.message}")
         }
     }
 
@@ -261,7 +290,10 @@ class StreamManager(
                     overlayBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
                 }
                 val bmp = overlayBitmap ?: return
-                if (bmp.isRecycled) return
+                if (bmp.isRecycled) {
+                    overlayBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                    return
+                }
                 val canvas = Canvas(bmp)
                 canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
                 if (m != null) {
@@ -273,9 +305,7 @@ class StreamManager(
                 imageFilter?.setImage(bmp)
             } catch (e: Exception) {
                 android.util.Log.e("PB_VIDEO", "refreshOverlay error: ${e.message}")
-                // Reset bitmap on error
                 overlayBitmap = null
-                filterReady = false
             }
         }
     }
@@ -308,7 +338,7 @@ class StreamManager(
         for (i in startIndex until qualities.size) {
             val q = qualities[i]
             if (camera.prepareVideo(q.width, q.height, q.fps, q.bitrate, 0) &&
-                camera.prepareAudio(128 * 1024, 44100, true)) {
+                camera.prepareAudio(192 * 1024, 44100, false)) {
                 if (q != selectedQuality) {
                     onStatusChange("⚠️ ${selectedQuality.label} không hỗ trợ, dùng ${q.label}")
                 }
@@ -381,6 +411,10 @@ class StreamManager(
     private fun startOverlayLoop() {
         overlayRunnable = object : Runnable {
             override fun run() {
+                // Retry setup filter if not ready yet (GL context might not be available immediately)
+                if (!filterReady) {
+                    setupFilter()
+                }
                 refreshOverlay()
                 overlayFrameCount++
                 // Log stream health every 5 minutes (1500 frames at 200ms interval)
@@ -388,7 +422,7 @@ class StreamManager(
                     val runtime = Runtime.getRuntime()
                     val usedMB = (runtime.totalMemory() - runtime.freeMemory()) / 1048576
                     val maxMB = runtime.maxMemory() / 1048576
-                    android.util.Log.i("PB_STREAM", "Health check: frames=$overlayFrameCount, mem=${usedMB}/${maxMB}MB, streaming=${rtmpCamera?.isStreaming}, bitrate=${rtmpCamera?.getBitrate()}")
+                    android.util.Log.i("PB_STREAM", "Health check: frames=$overlayFrameCount, mem=${usedMB}/${maxMB}MB, streaming=${rtmpCamera?.isStreaming}, bitrate=${rtmpCamera?.getBitrate()}, filterReady=$filterReady")
                 }
                 handler.postDelayed(this, 200)
             }
@@ -426,79 +460,33 @@ class StreamManager(
     }
     override fun onNewBitrateRtmp(bitrate: Long) {
         val q = actualQuality ?: return
-        val currentBitrate = rtmpCamera?.getBitrate()?.toLong() ?: q.bitrate.toLong()
-
-        // Min bitrate per quality level
-        val minBitrateForQuality = when (q) {
-            StreamQuality.Q_4K -> 8000L * 1024
-            StreamQuality.Q_2K -> 5000L * 1024
-            StreamQuality.Q_1080P -> 3000L * 1024
-            StreamQuality.Q_720P -> 1500L * 1024
-        }
+        val targetBitrate = q.bitrate.toLong()
+        val currentBitrate = rtmpCamera?.getBitrate()?.toLong() ?: targetBitrate
+        val minBitrate = (targetBitrate * 0.3).toLong().coerceAtLeast(1000L * 1024) // min 1Mbps
 
         if (bitrate < currentBitrate * 0.6) {
-            // Mạng yếu
+            // Mạng yếu — giảm bitrate 30%
             lowBitrateCount++
             highBitrateCount = 0
             if (lowBitrateCount >= LOW_BITRATE_THRESHOLD) {
                 lowBitrateCount = 0
-                // Giảm 30% bitrate
-                val newBitrate = (currentBitrate * 0.7).toLong()
-
-                if (newBitrate < minBitrateForQuality && q != StreamQuality.Q_720P) {
-                    // Bitrate quá thấp cho resolution hiện tại → hạ cấp resolution
-                    val nextQuality = when (q) {
-                        StreamQuality.Q_4K -> StreamQuality.Q_2K
-                        StreamQuality.Q_2K -> StreamQuality.Q_1080P
-                        StreamQuality.Q_1080P -> StreamQuality.Q_720P
-                        StreamQuality.Q_720P -> StreamQuality.Q_720P
-                    }
-                    actualQuality = nextQuality
-                    rtmpCamera?.setVideoBitrateOnFly(nextQuality.bitrate)
-                    val mbps = String.format("%.1f", nextQuality.bitrate.toFloat() / 1024 / 1024)
-                    onStatusChange("⚠️ Hạ ${nextQuality.label} (${mbps}Mbps)")
-                    android.util.Log.w("PB_VIDEO", "Adaptive: downgrade to ${nextQuality.label}")
-                } else {
-                    // Giảm bitrate trong cùng resolution
-                    val clampedBitrate = newBitrate.coerceAtLeast(minBitrateForQuality)
-                    rtmpCamera?.setVideoBitrateOnFly(clampedBitrate.toInt())
-                    val mbps = String.format("%.1f", clampedBitrate.toFloat() / 1024 / 1024)
-                    onStatusChange("⚠️ Mạng yếu → ${mbps}Mbps")
-                    android.util.Log.w("PB_VIDEO", "Adaptive: reduce bitrate to ${clampedBitrate / 1024}kbps")
-                }
+                val newBitrate = (currentBitrate * 0.7).toLong().coerceAtLeast(minBitrate)
+                rtmpCamera?.setVideoBitrateOnFly(newBitrate.toInt())
+                val mbps = String.format("%.1f", newBitrate.toFloat() / 1024 / 1024)
+                onStatusChange("⚠️ Mạng yếu → ${mbps}Mbps")
+                android.util.Log.w("PB_VIDEO", "Adaptive: reduce bitrate to ${newBitrate / 1024}kbps")
             }
-        } else if (bitrate > currentBitrate * 0.9) {
-            // Mạng ổn — thử tăng lại
+        } else if (bitrate > currentBitrate * 0.9 && currentBitrate < targetBitrate) {
+            // Mạng ổn — tăng bitrate 20% (không vượt target)
             highBitrateCount++
             lowBitrateCount = 0
             if (highBitrateCount >= HIGH_BITRATE_THRESHOLD) {
                 highBitrateCount = 0
-                val targetQuality = selectedQuality
-                val targetBitrate = q.bitrate.toLong()
-
-                if (currentBitrate < targetBitrate) {
-                    // Tăng 20% bitrate nhưng không vượt target
-                    val newBitrate = (currentBitrate * 1.2).toLong().coerceAtMost(targetBitrate)
-                    rtmpCamera?.setVideoBitrateOnFly(newBitrate.toInt())
-                    val mbps = String.format("%.1f", newBitrate.toFloat() / 1024 / 1024)
-                    onStatusChange("🔴 Mạng ổn → ${mbps}Mbps")
-                    android.util.Log.d("PB_VIDEO", "Adaptive: increase bitrate to ${newBitrate / 1024}kbps")
-                } else if (q != targetQuality && currentBitrate >= targetBitrate * 0.9) {
-                    // Bitrate đã đầy ở cấp thấp → tăng resolution lên
-                    val nextQuality = when (q) {
-                        StreamQuality.Q_720P -> StreamQuality.Q_1080P
-                        StreamQuality.Q_1080P -> StreamQuality.Q_2K
-                        StreamQuality.Q_2K -> StreamQuality.Q_4K
-                        StreamQuality.Q_4K -> StreamQuality.Q_4K
-                    }
-                    // Chỉ tăng nếu không vượt quality ban đầu
-                    if (nextQuality.ordinal <= targetQuality.ordinal) {
-                        actualQuality = nextQuality
-                        rtmpCamera?.setVideoBitrateOnFly(nextQuality.bitrate)
-                        onStatusChange("🔴 Nâng ${nextQuality.label}")
-                        android.util.Log.d("PB_VIDEO", "Adaptive: upgrade to ${nextQuality.label}")
-                    }
-                }
+                val newBitrate = (currentBitrate * 1.2).toLong().coerceAtMost(targetBitrate)
+                rtmpCamera?.setVideoBitrateOnFly(newBitrate.toInt())
+                val mbps = String.format("%.1f", newBitrate.toFloat() / 1024 / 1024)
+                onStatusChange("🔴 ${q.label} ${mbps}Mbps")
+                android.util.Log.d("PB_VIDEO", "Adaptive: increase bitrate to ${newBitrate / 1024}kbps")
             }
         } else {
             lowBitrateCount = 0

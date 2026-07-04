@@ -104,6 +104,8 @@ class StreamActivity : AppCompatActivity() {
         }
     }
 
+    private var streamEndedConfirmCount = 0
+
     private fun startConfigCheck() {
         configCheckRunnable = object : Runnable {
             override fun run() {
@@ -112,14 +114,19 @@ class StreamActivity : AppCompatActivity() {
                         val api = ApiService.create(apiBase)
                         val config = api.getMatchStreamConfig(matchId, matchType)
 
-                        // If stream_ended_at is set → stop stream and finish
-                        if (!config.stream_ended_at.isNullOrBlank()) {
-                            android.util.Log.w("PB_VIDEO", "configCheck: stream_ended_at='${config.stream_ended_at}' → finishing StreamActivity")
-                            runOnUiThread {
-                                streamManager?.release()
-                                finish()
+                        // If stream_ended_at is set AND status is done → confirm twice then finish
+                        if (!config.stream_ended_at.isNullOrBlank() && config.status == "done") {
+                            streamEndedConfirmCount++
+                            if (streamEndedConfirmCount >= 2) {
+                                android.util.Log.w("PB_VIDEO", "configCheck: stream_ended_at='${config.stream_ended_at}', status=done (confirmed) → finishing")
+                                runOnUiThread {
+                                    streamManager?.release()
+                                    finish()
+                                }
+                                return@launch
                             }
-                            return@launch
+                        } else {
+                            streamEndedConfirmCount = 0
                         }
 
                         // If rtmp_url + stream_key available and not currently streaming → start

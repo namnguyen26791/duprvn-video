@@ -1,6 +1,7 @@
 package vn.vdpr.video
 
 import android.content.Intent
+import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -340,25 +341,41 @@ fun VideoApp() {
                                             court_channels = mergedChannels,
                                         )
 
-                                        // Load overlay from first tournament
+                                        // Load overlay: merge từ tất cả giải (chưa có thì thêm, có rồi thì thôi)
                                         try {
-                                            val overlay = ApiService.create(apiBase).getOverlayConfig(firstId)
-                                            val topLogos = overlay.logos.filter { it.position == "top_right" }
-                                            val bottomLogos = overlay.logos.filter { it.position == "bottom_right" }
-                                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                                val topBitmaps = topLogos.mapNotNull { loadBitmapFromUrl(it.url) }
-                                                val bottomBitmaps = bottomLogos.mapNotNull { loadBitmapFromUrl(it.url) }
-                                                vn.vdpr.video.overlay.ScoreboardOverlay.topRightLogos = topBitmaps
-                                                vn.vdpr.video.overlay.ScoreboardOverlay.bottomRightLogos = bottomBitmaps
+                                            val mergedTopBitmaps = mutableListOf<Bitmap>()
+                                            val mergedBottomBitmaps = mutableListOf<Bitmap>()
+                                            val mergedMarquee = mutableListOf<String>()
+                                            var mergedPause: Bitmap? = null
+
+                                            for (tid in selectedTournaments) {
+                                                try {
+                                                    val overlay = ApiService.create(apiBase).getOverlayConfig(tid)
+                                                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                                        if (mergedTopBitmaps.isEmpty()) {
+                                                            val topLogos = overlay.logos.filter { it.position == "top_right" }
+                                                            mergedTopBitmaps.addAll(topLogos.mapNotNull { loadBitmapFromUrl(it.url) })
+                                                        }
+                                                        if (mergedBottomBitmaps.isEmpty()) {
+                                                            val bottomLogos = overlay.logos.filter { it.position == "bottom_right" }
+                                                            mergedBottomBitmaps.addAll(bottomLogos.mapNotNull { loadBitmapFromUrl(it.url) })
+                                                        }
+                                                        if (mergedPause == null) {
+                                                            overlay.logos.firstOrNull { it.position == "pause" }?.let { pauseLogo ->
+                                                                mergedPause = loadBitmapFromUrl(pauseLogo.url)
+                                                            }
+                                                        }
+                                                    }
+                                                    if (mergedMarquee.isEmpty() && overlay.marquee_texts.isNotEmpty()) {
+                                                        mergedMarquee.addAll(overlay.marquee_texts)
+                                                    }
+                                                } catch (_: Exception) {}
                                             }
-                                            if (overlay.marquee_texts.isNotEmpty()) {
-                                                vn.vdpr.video.overlay.ScoreboardOverlay.marqueeTexts = overlay.marquee_texts
-                                            }
-                                            overlay.logos.firstOrNull { it.position == "pause" }?.let { pauseLogo ->
-                                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                                    vn.vdpr.video.overlay.ScoreboardOverlay.pauseImage = loadBitmapFromUrl(pauseLogo.url)
-                                                }
-                                            }
+
+                                            if (mergedTopBitmaps.isNotEmpty()) vn.vdpr.video.overlay.ScoreboardOverlay.topRightLogos = mergedTopBitmaps
+                                            if (mergedBottomBitmaps.isNotEmpty()) vn.vdpr.video.overlay.ScoreboardOverlay.bottomRightLogos = mergedBottomBitmaps
+                                            if (mergedMarquee.isNotEmpty()) vn.vdpr.video.overlay.ScoreboardOverlay.marqueeTexts = mergedMarquee
+                                            if (mergedPause != null) vn.vdpr.video.overlay.ScoreboardOverlay.pauseImage = mergedPause
                                         } catch (_: Exception) {}
                                         step = 2
                                     } catch (e: Exception) { error = "Lỗi: ${e.message}" }
@@ -373,7 +390,33 @@ fun VideoApp() {
                     }
 
                     2 -> {
-                        Text("Chọn sân — ${selectedTournament?.name}", fontSize = 14.sp, color = Color.Gray)
+                        // Reload streamConfig nếu bị null (back từ step 3 hoặc process restore)
+                        LaunchedEffect(step) {
+                            if (streamConfig == null && selectedTournaments.isNotEmpty()) {
+                                try {
+                                    var mergedCourts = listOf<String>()
+                                    val mergedChannels = mutableMapOf<String, Int>()
+                                    var mergedStreamCfg = mapOf<String, vn.vdpr.video.data.CourtStreamConfig>()
+                                    for (tid in selectedTournaments) {
+                                        val cfg = ApiService.create(apiBase).getStreamConfig(tid)
+                                        mergedCourts = (mergedCourts + cfg.courts).distinct()
+                                        cfg.court_channels?.forEach { (court, count) ->
+                                            mergedChannels[court] = (mergedChannels[court] ?: 0) + count
+                                        }
+                                        mergedStreamCfg = mergedStreamCfg + cfg.stream_config
+                                    }
+                                    streamConfig = StreamConfigResponse(
+                                        courts = mergedCourts,
+                                        stream_config = mergedStreamCfg,
+                                        court_channels = mergedChannels,
+                                    )
+                                } catch (_: Exception) {}
+                            }
+                        }
+                        val displayName = selectedTournament?.name ?: selectedTournaments.let { tids ->
+                            if (tids.size == 1) tournaments.find { it.id == tids.first() }?.name else "${tids.size} giải"
+                        } ?: ""
+                        Text("Chọn sân — $displayName", fontSize = 14.sp, color = Color.Gray)
                         val courts = streamConfig?.courts ?: emptyList()
                         val channelCounts = streamConfig?.court_channels ?: emptyMap()
                         if (courts.isEmpty()) {
@@ -461,7 +504,13 @@ fun VideoApp() {
                         }
 
                         Spacer(modifier = Modifier.height(8.dp))
-                        TextButton(onClick = { step = 2 }) { Text("← Đổi sân") }
+                        TextButton(onClick = {
+                            // Reset court selection but keep streamConfig
+                            selectedCourt = null
+                            courtMatches = emptyList()
+                            autoLaunched = null
+                            step = 2
+                        }) { Text("← Đổi sân") }
                     }
                 }
             }
