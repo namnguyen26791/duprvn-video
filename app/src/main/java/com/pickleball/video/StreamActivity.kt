@@ -92,9 +92,9 @@ class StreamActivity : AppCompatActivity() {
             override fun surfaceDestroyed(holder: SurfaceHolder) { streamManager?.release() }
         })
 
-        // Listen Firebase for match on this court (scoreboard overlay)
+        // Listen Firebase for match by ID (scoreboard overlay)
         lifecycleScope.launch {
-            FirebaseMatchListener.observeCourtMatch(courtName, tournamentId).collectLatest { match ->
+            FirebaseMatchListener.observeMatchById(matchType, matchId).collectLatest { match ->
                 streamManager?.updateMatch(match)
             }
         }
@@ -110,6 +110,7 @@ class StreamActivity : AppCompatActivity() {
 
                         // If stream_ended_at is set → stop stream and finish
                         if (!config.stream_ended_at.isNullOrBlank()) {
+                            android.util.Log.w("PB_VIDEO", "configCheck: stream_ended_at='${config.stream_ended_at}' → finishing StreamActivity")
                             runOnUiThread {
                                 streamManager?.release()
                                 finish()

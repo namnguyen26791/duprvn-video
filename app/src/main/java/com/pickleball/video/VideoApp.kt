@@ -52,19 +52,31 @@ private fun loadBitmapFromUrl(imageUrl: String): android.graphics.Bitmap? {
 
 @Composable
 fun VideoApp() {
+    val context = LocalContext.current
+    val prefs = context.getSharedPreferences("video_app", android.content.Context.MODE_PRIVATE)
+
     var apiBase by remember { mutableStateOf(BuildConfig.API_BASE) }
-    var step by remember { mutableIntStateOf(0) }
+    var step by remember { mutableIntStateOf(prefs.getInt("step", 0)) }
     var tournaments by remember { mutableStateOf<List<TournamentListItem>>(emptyList()) }
     var tournamentSearch by remember { mutableStateOf("") }
     var selectedTournament by remember { mutableStateOf<TournamentListItem?>(null) }
+    var selectedTournaments by remember { mutableStateOf(prefs.getStringSet("tids", emptySet())?.mapNotNull { it.toIntOrNull() }?.toSet() ?: emptySet()) }
     var streamConfig by remember { mutableStateOf<StreamConfigResponse?>(null) }
-    var selectedCourt by remember { mutableStateOf<String?>(null) }
+    var selectedCourt by remember { mutableStateOf(prefs.getString("court", null)) }
     var courtMatches by remember { mutableStateOf<List<CourtMatchItem>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var autoLaunched by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
+
+    // Persist step/court/tournaments
+    LaunchedEffect(step, selectedCourt, selectedTournaments) {
+        prefs.edit()
+            .putInt("step", step)
+            .putString("court", selectedCourt)
+            .putStringSet("tids", selectedTournaments.map { it.toString() }.toSet())
+            .apply()
+    }
 
     // Camera selection
     var backCameras by remember { mutableStateOf<List<CameraInfo>>(emptyList()) }
@@ -83,16 +95,31 @@ fun VideoApp() {
     // Step 3: Poll court matches, auto-launch when a match starts playing
     LaunchedEffect(step, selectedCourt) {
         if (step != 3 || selectedCourt == null) return@LaunchedEffect
-        val tid = selectedTournament?.id ?: return@LaunchedEffect
         val court = selectedCourt ?: return@LaunchedEffect
+        val tids = selectedTournaments.toList()
+        if (tids.isEmpty()) return@LaunchedEffect
+
+        // Load tournaments list if empty (resuming from saved state)
+        if (tournaments.isEmpty()) {
+            try { tournaments = ApiService.create(apiBase).getTournaments().data } catch (_: Exception) {}
+        }
 
         while (step == 3) {
             try {
-                val matches = ApiService.create(apiBase).getCourtMatches(tid, court)
-                courtMatches = matches
+                // Merge court matches from all selected tournaments
+                val allMatches = mutableListOf<CourtMatchItem>()
+                for (tid in tids) {
+                    try {
+                        val tName = tournaments.find { it.id == tid }?.name ?: ""
+                        val m = ApiService.create(apiBase).getCourtMatches(tid, court)
+                        m.forEach { it.tournamentName = tName }
+                        allMatches.addAll(m)
+                    } catch (_: Exception) {}
+                }
+                courtMatches = allMatches
 
                 // Auto-launch: find match that is live (stream_started_at set, not ended, has rtmp)
-                val playing = matches.firstOrNull {
+                val playing = allMatches.firstOrNull {
                     !it.stream_started_at.isNullOrBlank() &&
                     it.stream_ended_at.isNullOrBlank() &&
                     !it.rtmp_url.isNullOrBlank()
@@ -102,11 +129,12 @@ fun VideoApp() {
                     val launchKey = "${playing.id}:${playing.broadcast_id ?: playing.rtmp_url ?: "none"}"
                     if (autoLaunched != launchKey && !playing.rtmp_url.isNullOrBlank()) {
                         autoLaunched = launchKey
+                        val tidForStream = if (selectedTournaments.size == 1) selectedTournaments.first() else 0
                         val intent = Intent(context, StreamActivity::class.java).apply {
                             putExtra("match_id", playing.id)
                             putExtra("match_type", playing.match_type)
                             putExtra("api_base", apiBase)
-                            putExtra("tournament_id", tid as Int)
+                            putExtra("tournament_id", tidForStream)
                             putExtra("court_name", court)
                             putExtra("camera_id", selectedCameraId)
                             putExtra("stream_quality", selectedQuality.name)
@@ -134,7 +162,7 @@ fun VideoApp() {
             ) {
                 Image(
                     painter = painterResource(id = R.drawable.logo),
-                    contentDescription = "PickBase",
+                    contentDescription = "VDPR",
                     modifier = Modifier.size(64.dp)
                 )
                 Text("VDPR Live", fontSize = 20.sp, fontWeight = FontWeight.Bold)
@@ -210,7 +238,7 @@ fun VideoApp() {
                                                 color = if (isSupported) Color(0xFF64748B) else Color(0xFFCBD5E1),
                                             )
                                         }
-                                        when {
+                        when {
                                             !isSupported -> Text("✗ Không hỗ trợ", fontSize = 11.sp, color = Color(0xFFEF4444))
                                             isSelected -> Text("✓", color = Color(0xFF2563EB), fontWeight = FontWeight.Bold)
                                         }
@@ -243,7 +271,7 @@ fun VideoApp() {
                     }
 
                     1 -> {
-                        Text("Chọn giải đấu", fontSize = 14.sp, color = Color.Gray)
+                        Text("Chọn giải đấu (có thể chọn nhiều)", fontSize = 14.sp, color = Color.Gray)
                         OutlinedTextField(
                             value = tournamentSearch,
                             onValueChange = { tournamentSearch = it },
@@ -262,49 +290,86 @@ fun VideoApp() {
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
                                 items(filtered) { t ->
+                                    val isChecked = selectedTournaments.contains(t.id)
                                     Card(
                                         modifier = Modifier.fillMaxWidth().clickable {
-                                            selectedTournament = t; loading = true; error = null
-                                            scope.launch {
-                                                try {
-                                                    streamConfig = ApiService.create(apiBase).getStreamConfig(t.id)
-                                                    // Pre-load overlay config (logos + marquee)
-                                                    try {
-                                                        val overlay = ApiService.create(apiBase).getOverlayConfig(t.id)
-                                                        val topLogos = overlay.logos.filter { it.position == "top_right" }
-                                                        val bottomLogos = overlay.logos.filter { it.position == "bottom_right" }
-                                                        // Load all logos on IO thread
-                                                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                                            val topBitmaps = topLogos.mapNotNull { loadBitmapFromUrl(it.url) }
-                                                            val bottomBitmaps = bottomLogos.mapNotNull { loadBitmapFromUrl(it.url) }
-                                                            vn.vdpr.video.overlay.ScoreboardOverlay.topRightLogos = topBitmaps
-                                                            vn.vdpr.video.overlay.ScoreboardOverlay.bottomRightLogos = bottomBitmaps
-                                                        }
-                                                        if (overlay.marquee_texts.isNotEmpty()) {
-                                                            vn.vdpr.video.overlay.ScoreboardOverlay.marqueeTexts = overlay.marquee_texts
-                                                        }
-                                                        // Load pause image if configured
-                                                        overlay.logos.firstOrNull { it.position == "pause" }?.let { pauseLogo ->
-                                                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                                                vn.vdpr.video.overlay.ScoreboardOverlay.pauseImage = loadBitmapFromUrl(pauseLogo.url)
-                                                            }
-                                                        }
-                                                    } catch (_: Exception) {}
-                                                    step = 2
-                                                } catch (e: Exception) { error = "Lỗi: ${e.message}" }
-                                                loading = false
-                                            }
+                                            selectedTournaments = if (isChecked) selectedTournaments - t.id else selectedTournaments + t.id
                                         },
                                         shape = RoundedCornerShape(8.dp),
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = if (isChecked) Color(0xFFDCFCE7) else MaterialTheme.colorScheme.surface
+                                        ),
                                     ) {
-                                        Text("🏆 ${t.name}", modifier = Modifier.padding(12.dp), fontWeight = FontWeight.Medium)
+                        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Text("🏆 ${t.name}", modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
+                                            if (isChecked) Text("✓", color = Color(0xFF16A34A), fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                        }
                                     }
                                 }
                             }
                         }
+                        if (selectedTournaments.isNotEmpty()) {
+                            Text("Đã chọn ${selectedTournaments.size} giải", fontSize = 12.sp, color = Color(0xFF16A34A), fontWeight = FontWeight.Medium)
+                        }
                         if (error != null) Text(error!!, color = Color.Red, fontSize = 12.sp)
                         if (loading) CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                        TextButton(onClick = { step = 0; tournamentSearch = "" }) { Text("← Quay lại") }
+                        Button(
+                            onClick = {
+                                if (selectedTournaments.isEmpty()) return@Button
+                                val firstId = selectedTournaments.first()
+                                selectedTournament = tournaments.find { it.id == firstId }
+                                loading = true; error = null
+                                scope.launch {
+                                    try {
+                                        // Load stream config from ALL selected tournaments, merge courts + court_channels
+                                        var mergedCourts = listOf<String>()
+                                        val mergedChannels = mutableMapOf<String, Int>()
+                                        var mergedStreamCfg = mapOf<String, vn.vdpr.video.data.CourtStreamConfig>()
+                                        for (tid in selectedTournaments) {
+                                            val cfg = ApiService.create(apiBase).getStreamConfig(tid)
+                                            mergedCourts = (mergedCourts + cfg.courts).distinct()
+                                            cfg.court_channels?.forEach { (court, count) ->
+                                                mergedChannels[court] = (mergedChannels[court] ?: 0) + count
+                                            }
+                                            // Merge stream_config (later overrides earlier for same court)
+                                            mergedStreamCfg = mergedStreamCfg + cfg.stream_config
+                                        }
+                                        streamConfig = StreamConfigResponse(
+                                            courts = mergedCourts,
+                                            stream_config = mergedStreamCfg,
+                                            court_channels = mergedChannels,
+                                        )
+
+                                        // Load overlay from first tournament
+                                        try {
+                                            val overlay = ApiService.create(apiBase).getOverlayConfig(firstId)
+                                            val topLogos = overlay.logos.filter { it.position == "top_right" }
+                                            val bottomLogos = overlay.logos.filter { it.position == "bottom_right" }
+                                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                                val topBitmaps = topLogos.mapNotNull { loadBitmapFromUrl(it.url) }
+                                                val bottomBitmaps = bottomLogos.mapNotNull { loadBitmapFromUrl(it.url) }
+                                                vn.vdpr.video.overlay.ScoreboardOverlay.topRightLogos = topBitmaps
+                                                vn.vdpr.video.overlay.ScoreboardOverlay.bottomRightLogos = bottomBitmaps
+                                            }
+                                            if (overlay.marquee_texts.isNotEmpty()) {
+                                                vn.vdpr.video.overlay.ScoreboardOverlay.marqueeTexts = overlay.marquee_texts
+                                            }
+                                            overlay.logos.firstOrNull { it.position == "pause" }?.let { pauseLogo ->
+                                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                                    vn.vdpr.video.overlay.ScoreboardOverlay.pauseImage = loadBitmapFromUrl(pauseLogo.url)
+                                                }
+                                            }
+                                        } catch (_: Exception) {}
+                                        step = 2
+                                    } catch (e: Exception) { error = "Lỗi: ${e.message}" }
+                                    loading = false
+                                }
+                            },
+                            enabled = !loading && selectedTournaments.isNotEmpty(),
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A)),
+                        ) { Text("Tiếp tục →", fontWeight = FontWeight.Bold) }
+                        TextButton(onClick = { step = 0; tournamentSearch = ""; selectedTournaments = emptySet() }) { Text("← Quay lại") }
                     }
 
                     2 -> {
@@ -377,6 +442,9 @@ fun VideoApp() {
                                         Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                                             Column(modifier = Modifier.weight(1f)) {
                                                 Text("T${m.match_order ?: "?"} · ${m.team1} vs ${m.team2}", fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                                                if (!m.tournamentName.isNullOrBlank()) {
+                                                    Text(m.tournamentName!!, fontSize = 10.sp, color = Color(0xFF64748B))
+                                                }
                                                 Text(statusLabel, fontSize = 11.sp, color = statusColor)
                                             }
                                         }
@@ -400,4 +468,3 @@ fun VideoApp() {
         }
     }
 }
-

@@ -60,6 +60,7 @@ data class CourtMatchItem(
     val broadcast_id: String?,
     val stream_started_at: String?,
     val stream_ended_at: String?,
+    var tournamentName: String? = null, // gắn client-side khi merge
 )
 
 data class DeviceStatusRequest(

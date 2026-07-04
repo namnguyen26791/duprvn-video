@@ -12,31 +12,61 @@ object FirebaseMatchListener {
 
     private val db = FirebaseDatabase.getInstance()
 
+    fun observeMatchById(matchType: String, matchId: Int): Flow<MatchState?> = callbackFlow {
+        val refPath = if (matchType == "group") "group_matches" else "matches"
+        val ref = db.getReference("$refPath/$matchId")
+
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                if (snapshot.exists()) {
+                    val status = snapshot.child("status").getValue(String::class.java) ?: ""
+                    if (status == "playing" || status == "paused") {
+                        trySend(parseMatch(snapshot))
+                    } else {
+                        trySend(null)
+                    }
+                } else {
+                    trySend(null)
+                }
+            }
+            override fun onCancelled(e: DatabaseError) {}
+        }
+
+        ref.addValueEventListener(listener)
+        awaitClose { ref.removeEventListener(listener) }
+    }
+
     fun observeCourtMatch(courtName: String, tournamentId: Int = 0): Flow<MatchState?> = callbackFlow {
         val bracketRef = db.getReference("matches")
         val groupRef = db.getReference("group_matches")
 
+        var lastEmitted: MatchState? = null
+
+        val emitBest = { bracketSnap: DataSnapshot?, groupSnap: DataSnapshot? ->
+            val fromBracket = if (bracketSnap != null) findMatch(bracketSnap, courtName, tournamentId) else null
+            val fromGroup = if (groupSnap != null) findMatch(groupSnap, courtName, tournamentId) else null
+            val best = fromBracket ?: fromGroup
+            if (best != lastEmitted) {
+                lastEmitted = best
+                trySend(best)
+            }
+        }
+
+        var latestBracketSnap: DataSnapshot? = null
+        var latestGroupSnap: DataSnapshot? = null
+
         val bracketListener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
-                val found = findMatch(snapshot, courtName, tournamentId)
-                if (found != null) {
-                    trySend(found)
-                } else {
-                    groupRef.addListenerForSingleValueEvent(object : ValueEventListener {
-                        override fun onDataChange(gs: DataSnapshot) {
-                            trySend(findMatch(gs, courtName, tournamentId))
-                        }
-                        override fun onCancelled(e: DatabaseError) {}
-                    })
-                }
+                latestBracketSnap = snapshot
+                emitBest(latestBracketSnap, latestGroupSnap)
             }
             override fun onCancelled(e: DatabaseError) {}
         }
 
         val groupListener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
-                val found = findMatch(snapshot, courtName, tournamentId)
-                if (found != null) trySend(found)
+                latestGroupSnap = snapshot
+                emitBest(latestBracketSnap, latestGroupSnap)
             }
             override fun onCancelled(e: DatabaseError) {}
         }
@@ -52,20 +82,31 @@ object FirebaseMatchListener {
     private fun findMatch(snapshot: DataSnapshot, courtName: String, tournamentId: Int): MatchState? {
         val now = System.currentTimeMillis()
         android.util.Log.d("PB_VIDEO", "findMatch: looking for court='$courtName' tid=$tournamentId, children=${snapshot.childrenCount}")
+        
+        var bestChild: DataSnapshot? = null
+        var bestUpdatedAt = 0L
+
         for (child in snapshot.children) {
             val court = child.child("court").getValue(String::class.java) ?: continue
             val status = child.child("status").getValue(String::class.java) ?: continue
             val updatedAt = child.child("updatedAt").getValue(Long::class.java) ?: 0L
             val tid = child.child("tournamentId").getValue(Int::class.java) ?: 0
-            android.util.Log.d("PB_VIDEO", "  child=${child.key}: court='$court' status='$status' tid=$tid updatedAt=$updatedAt age=${(now-updatedAt)/1000}s")
 
             if (court != courtName) continue
             if (status != "playing") continue
             if ((now - updatedAt) > 7200000) continue
             if (tournamentId > 0 && tid > 0 && tid != tournamentId) continue
 
-            android.util.Log.d("PB_VIDEO", "  → MATCHED!")
-            return parseMatch(child)
+            // Pick the most recently updated match
+            if (updatedAt > bestUpdatedAt) {
+                bestUpdatedAt = updatedAt
+                bestChild = child
+            }
+        }
+
+        if (bestChild != null) {
+            android.util.Log.d("PB_VIDEO", "  → MATCHED: ${bestChild.key} updatedAt=${bestUpdatedAt}")
+            return parseMatch(bestChild)
         }
         return null
     }
@@ -98,4 +139,3 @@ object FirebaseMatchListener {
         )
     }
 }
-

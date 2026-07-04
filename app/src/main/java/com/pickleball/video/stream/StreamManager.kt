@@ -78,6 +78,7 @@ class StreamManager(
     private var overlayRunnable: Runnable? = null
     private var filterReady = false
     var selectedCameraId: String = "0"; private set
+    private var lastRtmpUrl: String? = null
 
     // Adaptive bitrate — giảm chất lượng khi mạng yếu, tăng lại khi ổn, min 720p
     private var lowBitrateCount = 0
@@ -241,33 +242,48 @@ class StreamManager(
         }
     }
 
+    private var overlayBitmap: Bitmap? = null
+    private val overlayLock = Object()
+
     private fun refreshOverlay() {
         if (!filterReady) {
-            android.util.Log.w("PB_VIDEO", "refreshOverlay: filter not ready")
-            return
+            setupFilter()
+            if (!filterReady) return
         }
         val m = currentMatch
-        android.util.Log.d("PB_VIDEO", "refreshOverlay: match=${m?.left?.teamName} vs ${m?.right?.teamName}, score=${m?.scoreLeft}-${m?.scoreRight}")
 
         val q = actualQuality ?: selectedQuality
         val w = q.width; val h = q.height
-        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bmp)
-        canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
-        if (m != null) {
-            if (m.paused) ScoreboardOverlay.drawPaused(canvas, w, h, m)
-            else ScoreboardOverlay.draw(canvas, w, h, m)
-        }
-        try {
-            imageFilter?.setImage(bmp)
-        } catch (e: Exception) {
-            android.util.Log.e("PB_VIDEO", "setImage failed: ${e.message}")
+
+        synchronized(overlayLock) {
+            try {
+                if (overlayBitmap == null || overlayBitmap!!.isRecycled || overlayBitmap!!.width != w || overlayBitmap!!.height != h) {
+                    overlayBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                }
+                val bmp = overlayBitmap ?: return
+                if (bmp.isRecycled) return
+                val canvas = Canvas(bmp)
+                canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+                if (m != null) {
+                    if (m.paused) ScoreboardOverlay.drawPaused(canvas, w, h, m)
+                    else ScoreboardOverlay.draw(canvas, w, h, m)
+                } else {
+                    ScoreboardOverlay.drawLogosOnly(canvas, w, h)
+                }
+                imageFilter?.setImage(bmp)
+            } catch (e: Exception) {
+                android.util.Log.e("PB_VIDEO", "refreshOverlay error: ${e.message}")
+                // Reset bitmap on error
+                overlayBitmap = null
+                filterReady = false
+            }
         }
     }
 
     fun startStream(rtmpUrl: String, streamKey: String) {
         val camera = rtmpCamera ?: return
         val fullUrl = "$rtmpUrl/$streamKey"
+        lastRtmpUrl = fullUrl
         if (!camera.isStreaming) {
             val quality = resolveQuality(camera)
             if (quality != null) {
@@ -360,10 +376,20 @@ class StreamManager(
         }
     }
 
+    private var overlayFrameCount = 0L
+
     private fun startOverlayLoop() {
         overlayRunnable = object : Runnable {
             override fun run() {
                 refreshOverlay()
+                overlayFrameCount++
+                // Log stream health every 5 minutes (1500 frames at 200ms interval)
+                if (overlayFrameCount % 1500 == 0L) {
+                    val runtime = Runtime.getRuntime()
+                    val usedMB = (runtime.totalMemory() - runtime.freeMemory()) / 1048576
+                    val maxMB = runtime.maxMemory() / 1048576
+                    android.util.Log.i("PB_STREAM", "Health check: frames=$overlayFrameCount, mem=${usedMB}/${maxMB}MB, streaming=${rtmpCamera?.isStreaming}, bitrate=${rtmpCamera?.getBitrate()}")
+                }
                 handler.postDelayed(this, 200)
             }
         }
@@ -379,20 +405,36 @@ class StreamManager(
         catch (_: Exception) {}
     }
 
-    override fun onConnectionStartedRtmp(rtmpUrl: String) { onStatusChange("🔄 Kết nối...") }
+    override fun onConnectionStartedRtmp(rtmpUrl: String) {
+        android.util.Log.i("PB_STREAM", "Connection started: $rtmpUrl")
+        onStatusChange("🔄 Kết nối...")
+    }
     override fun onConnectionSuccessRtmp() {
+        android.util.Log.i("PB_STREAM", "Connection success! Streaming at ${actualQuality?.label ?: selectedQuality.label}")
         lowBitrateCount = 0
         val q = actualQuality ?: selectedQuality
         onStatusChange("🔴 LIVE ${q.label}")
+        // Ensure overlay loop is running after reconnect
+        if (overlayRunnable == null) {
+            handler.post { startOverlayLoop() }
+        }
     }
     override fun onConnectionFailedRtmp(reason: String) {
+        android.util.Log.e("PB_STREAM", "Connection FAILED: $reason")
         onStatusChange("❌ $reason")
         handler.postDelayed({ rtmpCamera?.reTry(5000, reason) }, 5000)
     }
     override fun onNewBitrateRtmp(bitrate: Long) {
         val q = actualQuality ?: return
         val currentBitrate = rtmpCamera?.getBitrate()?.toLong() ?: q.bitrate.toLong()
-        val minBitrate = 1500L * 1024 // min 1.5Mbps, dưới mức này thì chịu
+
+        // Min bitrate per quality level
+        val minBitrateForQuality = when (q) {
+            StreamQuality.Q_4K -> 8000L * 1024
+            StreamQuality.Q_2K -> 5000L * 1024
+            StreamQuality.Q_1080P -> 3000L * 1024
+            StreamQuality.Q_720P -> 1500L * 1024
+        }
 
         if (bitrate < currentBitrate * 0.6) {
             // Mạng yếu
@@ -400,13 +442,30 @@ class StreamManager(
             highBitrateCount = 0
             if (lowBitrateCount >= LOW_BITRATE_THRESHOLD) {
                 lowBitrateCount = 0
-                // Giảm 30% bitrate hiện tại
-                val newBitrate = (currentBitrate * 0.7).toLong().coerceAtLeast(minBitrate)
-                if (newBitrate < minBitrate) return // không giảm dưới min
-                rtmpCamera?.setVideoBitrateOnFly(newBitrate.toInt())
-                val mbps = String.format("%.1f", newBitrate.toFloat() / 1024 / 1024)
-                onStatusChange("⚠️ Mạng yếu → ${mbps}Mbps")
-                android.util.Log.w("PB_VIDEO", "Adaptive: reduce bitrate to ${newBitrate / 1024}kbps")
+                // Giảm 30% bitrate
+                val newBitrate = (currentBitrate * 0.7).toLong()
+
+                if (newBitrate < minBitrateForQuality && q != StreamQuality.Q_720P) {
+                    // Bitrate quá thấp cho resolution hiện tại → hạ cấp resolution
+                    val nextQuality = when (q) {
+                        StreamQuality.Q_4K -> StreamQuality.Q_2K
+                        StreamQuality.Q_2K -> StreamQuality.Q_1080P
+                        StreamQuality.Q_1080P -> StreamQuality.Q_720P
+                        StreamQuality.Q_720P -> StreamQuality.Q_720P
+                    }
+                    actualQuality = nextQuality
+                    rtmpCamera?.setVideoBitrateOnFly(nextQuality.bitrate)
+                    val mbps = String.format("%.1f", nextQuality.bitrate.toFloat() / 1024 / 1024)
+                    onStatusChange("⚠️ Hạ ${nextQuality.label} (${mbps}Mbps)")
+                    android.util.Log.w("PB_VIDEO", "Adaptive: downgrade to ${nextQuality.label}")
+                } else {
+                    // Giảm bitrate trong cùng resolution
+                    val clampedBitrate = newBitrate.coerceAtLeast(minBitrateForQuality)
+                    rtmpCamera?.setVideoBitrateOnFly(clampedBitrate.toInt())
+                    val mbps = String.format("%.1f", clampedBitrate.toFloat() / 1024 / 1024)
+                    onStatusChange("⚠️ Mạng yếu → ${mbps}Mbps")
+                    android.util.Log.w("PB_VIDEO", "Adaptive: reduce bitrate to ${clampedBitrate / 1024}kbps")
+                }
             }
         } else if (bitrate > currentBitrate * 0.9) {
             // Mạng ổn — thử tăng lại
@@ -414,14 +473,31 @@ class StreamManager(
             lowBitrateCount = 0
             if (highBitrateCount >= HIGH_BITRATE_THRESHOLD) {
                 highBitrateCount = 0
+                val targetQuality = selectedQuality
                 val targetBitrate = q.bitrate.toLong()
+
                 if (currentBitrate < targetBitrate) {
-                    // Tăng 20% nhưng không vượt target
+                    // Tăng 20% bitrate nhưng không vượt target
                     val newBitrate = (currentBitrate * 1.2).toLong().coerceAtMost(targetBitrate)
                     rtmpCamera?.setVideoBitrateOnFly(newBitrate.toInt())
                     val mbps = String.format("%.1f", newBitrate.toFloat() / 1024 / 1024)
                     onStatusChange("🔴 Mạng ổn → ${mbps}Mbps")
                     android.util.Log.d("PB_VIDEO", "Adaptive: increase bitrate to ${newBitrate / 1024}kbps")
+                } else if (q != targetQuality && currentBitrate >= targetBitrate * 0.9) {
+                    // Bitrate đã đầy ở cấp thấp → tăng resolution lên
+                    val nextQuality = when (q) {
+                        StreamQuality.Q_720P -> StreamQuality.Q_1080P
+                        StreamQuality.Q_1080P -> StreamQuality.Q_2K
+                        StreamQuality.Q_2K -> StreamQuality.Q_4K
+                        StreamQuality.Q_4K -> StreamQuality.Q_4K
+                    }
+                    // Chỉ tăng nếu không vượt quality ban đầu
+                    if (nextQuality.ordinal <= targetQuality.ordinal) {
+                        actualQuality = nextQuality
+                        rtmpCamera?.setVideoBitrateOnFly(nextQuality.bitrate)
+                        onStatusChange("🔴 Nâng ${nextQuality.label}")
+                        android.util.Log.d("PB_VIDEO", "Adaptive: upgrade to ${nextQuality.label}")
+                    }
                 }
             }
         } else {
@@ -429,8 +505,17 @@ class StreamManager(
             highBitrateCount = 0
         }
     }
-    override fun onDisconnectRtmp() { onStatusChange("⚠️ Mất kết nối") }
-    override fun onAuthErrorRtmp() { onStatusChange("❌ Auth error") }
-    override fun onAuthSuccessRtmp() {}
+    override fun onDisconnectRtmp() {
+        android.util.Log.w("PB_STREAM", "DISCONNECTED from RTMP! Will retry in 5s. isStreaming=${rtmpCamera?.isStreaming}")
+        onStatusChange("⚠️ Mất kết nối — đang thử kết nối lại...")
+        // Auto-reconnect after 5 seconds
+        handler.postDelayed({
+            if (rtmpCamera?.isStreaming == false && lastRtmpUrl != null) {
+                android.util.Log.w("PB_VIDEO", "Auto-reconnecting after disconnect...")
+                rtmpCamera?.reTry(5000, "disconnect")
+            }
+        }, 5000)
+    }
+    override fun onAuthErrorRtmp() { android.util.Log.e("PB_STREAM", "Auth error!"); onStatusChange("❌ Auth error") }
+    override fun onAuthSuccessRtmp() { android.util.Log.i("PB_STREAM", "Auth success") }
 }
-
