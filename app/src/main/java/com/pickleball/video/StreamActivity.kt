@@ -35,6 +35,10 @@ class StreamActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Force IPv4 to avoid RTMP connection failures on IPv6-only networks
+        System.setProperty("java.net.preferIPv4Stack", "true")
+
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         requestWindowFeature(Window.FEATURE_NO_TITLE)
         window.setFlags(
