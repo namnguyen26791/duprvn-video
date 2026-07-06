@@ -160,6 +160,7 @@ class StreamManager(
         this.selectedCameraId = cameraId
         rtmpCamera = RtmpCamera2(openGlView, this)
         loadPickbaseLogo()
+        android.util.Log.i("PB_OVERLAY", "StreamManager.init: court=$courtName camera=$cameraId quality=${selectedQuality.label} topLogos=${ScoreboardOverlay.topRightLogos.size} bottomLogos=${ScoreboardOverlay.bottomRightLogos.size} pauseImg=${ScoreboardOverlay.pauseImage != null} marquee=${ScoreboardOverlay.marqueeTexts.size}")
     }
 
     /** Load PickBase logo from drawable */
@@ -250,16 +251,50 @@ class StreamManager(
     }
 
     fun updateMatch(match: MatchState?) {
-        currentMatch = match
+        if (match != null) {
+            // Có data mới → hiện ngay
+            if (currentMatch == null) {
+                android.util.Log.i("PB_OVERLAY", "▶ Scoreboard ON: ${match.left.teamName} vs ${match.right.teamName} [${match.scoreLeft}-${match.scoreRight}] paused=${match.paused}")
+            }
+            lastMatchReceivedAt = System.currentTimeMillis()
+            currentMatch = match
+        } else {
+            // Firebase emit null → debounce 3s trước khi clear scoreboard
+            val elapsed = System.currentTimeMillis() - lastMatchReceivedAt
+            if (elapsed < 3000 && currentMatch != null) {
+                android.util.Log.d("PB_OVERLAY", "Firebase null but debouncing (${elapsed}ms < 3000ms), keeping scoreboard")
+                return
+            }
+            if (currentMatch != null) {
+                android.util.Log.w("PB_OVERLAY", "⏹ Scoreboard OFF: Firebase null for ${elapsed}ms, clearing")
+            }
+            currentMatch = null
+        }
         refreshOverlay()
     }
+
+    /** Gọi khi switch sang trận mới — clear ngay không debounce */
+    fun clearMatch() {
+        android.util.Log.i("PB_OVERLAY", "🔄 clearMatch: switching to new match")
+        currentMatch = null
+        lastMatchReceivedAt = 0L
+        refreshOverlay()
+    }
+
+    private var lastMatchReceivedAt = 0L
 
     private fun setupFilter() {
         if (filterReady) return
         try {
-            val gl = rtmpCamera?.glInterface ?: return
+            val gl = rtmpCamera?.glInterface ?: run {
+                android.util.Log.d("PB_VIDEO", "setupFilter: glInterface null, will retry")
+                return
+            }
             // Only setup filter when GL context is actually ready (camera is previewing or streaming)
-            if (rtmpCamera?.isOnPreview != true && rtmpCamera?.isStreaming != true) return
+            if (rtmpCamera?.isOnPreview != true && rtmpCamera?.isStreaming != true) {
+                android.util.Log.d("PB_VIDEO", "setupFilter: not previewing/streaming yet, will retry")
+                return
+            }
             imageFilter = ImageObjectFilterRender()
             gl.setFilter(imageFilter)
             imageFilter?.setScale(100f, 100f) // full screen overlay
@@ -268,11 +303,14 @@ class StreamManager(
             android.util.Log.i("PB_VIDEO", "setupFilter SUCCESS — overlay active")
         } catch (e: Exception) {
             android.util.Log.w("PB_VIDEO", "setupFilter failed (will retry): ${e.message}")
+            // Reset so next attempt creates fresh filter
+            imageFilter = null
         }
     }
 
     private var overlayBitmap: Bitmap? = null
     private val overlayLock = Object()
+    private var lastOverlayState = "" // track state changes for logging
 
     private fun refreshOverlay() {
         if (!filterReady) {
@@ -283,6 +321,17 @@ class StreamManager(
 
         val q = actualQuality ?: selectedQuality
         val w = q.width; val h = q.height
+
+        // Log state transitions
+        val stateKey = when {
+            m != null && m.paused -> "paused"
+            m != null -> "playing:${m.scoreLeft}-${m.scoreRight}"
+            else -> "logos_only"
+        }
+        if (stateKey != lastOverlayState) {
+            android.util.Log.i("PB_OVERLAY", "State: $lastOverlayState → $stateKey | hasLogos=${ScoreboardOverlay.topRightLogos.isNotEmpty()} hasPause=${ScoreboardOverlay.pauseImage != null} hasMarquee=${ScoreboardOverlay.marqueeTexts.isNotEmpty()}")
+            lastOverlayState = stateKey
+        }
 
         synchronized(overlayLock) {
             try {
@@ -304,7 +353,7 @@ class StreamManager(
                 }
                 imageFilter?.setImage(bmp)
             } catch (e: Exception) {
-                android.util.Log.e("PB_VIDEO", "refreshOverlay error: ${e.message}")
+                android.util.Log.e("PB_OVERLAY", "refreshOverlay CRASH: ${e.message}")
                 overlayBitmap = null
             }
         }
@@ -319,8 +368,18 @@ class StreamManager(
             if (quality != null) {
                 actualQuality = quality
                 camera.startStream(fullUrl)
-                setupFilter()
                 onStatusChange("🔴 Đang stream ${quality.label}...")
+                // Force setup filter with retries — GL context should be ready now
+                filterReady = false
+                setupFilter()
+                if (!filterReady) {
+                    // Retry aggressively: 100ms, 300ms, 500ms, 1000ms, 2000ms
+                    handler.postDelayed({ setupFilter(); refreshOverlay() }, 100)
+                    handler.postDelayed({ setupFilter(); refreshOverlay() }, 300)
+                    handler.postDelayed({ setupFilter(); refreshOverlay() }, 500)
+                    handler.postDelayed({ setupFilter(); refreshOverlay() }, 1000)
+                    handler.postDelayed({ setupFilter(); refreshOverlay() }, 2000)
+                }
                 startOverlayLoop()
             } else {
                 onStatusChange("❌ Không thể khởi tạo camera/audio ở bất kỳ chất lượng nào")
@@ -415,6 +474,12 @@ class StreamManager(
                 if (!filterReady) {
                     setupFilter()
                 }
+                // Debounce: nếu Firebase null quá 5s thì clear scoreboard
+                if (currentMatch != null && lastMatchReceivedAt > 0) {
+                    // Still have match → fine
+                } else if (currentMatch == null && lastMatchReceivedAt > 0) {
+                    // Already cleared
+                }
                 refreshOverlay()
                 overlayFrameCount++
                 // Log stream health every 5 minutes (1500 frames at 200ms interval)
@@ -422,7 +487,7 @@ class StreamManager(
                     val runtime = Runtime.getRuntime()
                     val usedMB = (runtime.totalMemory() - runtime.freeMemory()) / 1048576
                     val maxMB = runtime.maxMemory() / 1048576
-                    android.util.Log.i("PB_STREAM", "Health check: frames=$overlayFrameCount, mem=${usedMB}/${maxMB}MB, streaming=${rtmpCamera?.isStreaming}, bitrate=${rtmpCamera?.getBitrate()}, filterReady=$filterReady")
+                    android.util.Log.i("PB_STREAM", "Health check: frames=$overlayFrameCount, mem=${usedMB}/${maxMB}MB, streaming=${rtmpCamera?.isStreaming}, bitrate=${rtmpCamera?.getBitrate()}, filterReady=$filterReady, hasMatch=${currentMatch != null}")
                 }
                 handler.postDelayed(this, 200)
             }
@@ -430,13 +495,17 @@ class StreamManager(
         handler.post(overlayRunnable!!)
     }
 
-    private fun stopOverlayLoop() { overlayRunnable?.let { handler.removeCallbacks(it) } }
-    fun stopStream() { rtmpCamera?.stopStream(); stopOverlayLoop(); onStatusChange("⏹ Đã dừng") }
+    private fun stopOverlayLoop() { overlayRunnable?.let { handler.removeCallbacks(it) }; overlayRunnable = null }
+    fun stopStream() {
+        android.util.Log.w("PB_STREAM", "⏹ stopStream called")
+        rtmpCamera?.stopStream(); stopOverlayLoop(); onStatusChange("⏹ Đã dừng")
+    }
     fun isStreaming(): Boolean = rtmpCamera?.isStreaming == true
     fun release() {
+        android.util.Log.w("PB_STREAM", "🗑 release: stopping stream + preview + overlay")
         stopOverlayLoop()
         try { if (rtmpCamera?.isStreaming == true) rtmpCamera?.stopStream(); rtmpCamera?.stopPreview() }
-        catch (_: Exception) {}
+        catch (e: Exception) { android.util.Log.e("PB_STREAM", "release error: ${e.message}") }
     }
 
     override fun onConnectionStartedRtmp(rtmpUrl: String) {
@@ -448,13 +517,20 @@ class StreamManager(
         lowBitrateCount = 0
         val q = actualQuality ?: selectedQuality
         onStatusChange("🔴 LIVE ${q.label}")
+        // Force re-setup GL filter after reconnect (old filter may be invalid)
+        filterReady = false
+        handler.post {
+            setupFilter()
+            refreshOverlay()
+        }
         // Ensure overlay loop is running after reconnect
         if (overlayRunnable == null) {
             handler.post { startOverlayLoop() }
         }
     }
     override fun onConnectionFailedRtmp(reason: String) {
-        android.util.Log.e("PB_STREAM", "Connection FAILED: $reason")
+        android.util.Log.e("PB_STREAM", "❌ Connection FAILED: $reason")
+        android.util.Log.e("PB_STREAM", "  → isStreaming=${rtmpCamera?.isStreaming}, lastUrl=${lastRtmpUrl?.take(50)}")
         onStatusChange("❌ $reason")
         handler.postDelayed({ rtmpCamera?.reTry(5000, reason) }, 5000)
     }
@@ -473,8 +549,8 @@ class StreamManager(
                 val newBitrate = (currentBitrate * 0.7).toLong().coerceAtLeast(minBitrate)
                 rtmpCamera?.setVideoBitrateOnFly(newBitrate.toInt())
                 val mbps = String.format("%.1f", newBitrate.toFloat() / 1024 / 1024)
+                android.util.Log.w("PB_STREAM", "⚠️ WEAK NETWORK: bitrate ${bitrate/1024}kbps < threshold, reducing to ${newBitrate/1024}kbps (${mbps}Mbps)")
                 onStatusChange("⚠️ Mạng yếu → ${mbps}Mbps")
-                android.util.Log.w("PB_VIDEO", "Adaptive: reduce bitrate to ${newBitrate / 1024}kbps")
             }
         } else if (bitrate > currentBitrate * 0.9 && currentBitrate < targetBitrate) {
             // Mạng ổn — tăng bitrate 20% (không vượt target)
@@ -485,8 +561,8 @@ class StreamManager(
                 val newBitrate = (currentBitrate * 1.2).toLong().coerceAtMost(targetBitrate)
                 rtmpCamera?.setVideoBitrateOnFly(newBitrate.toInt())
                 val mbps = String.format("%.1f", newBitrate.toFloat() / 1024 / 1024)
+                android.util.Log.d("PB_STREAM", "↑ Network OK: increasing to ${newBitrate/1024}kbps (${mbps}Mbps)")
                 onStatusChange("🔴 ${q.label} ${mbps}Mbps")
-                android.util.Log.d("PB_VIDEO", "Adaptive: increase bitrate to ${newBitrate / 1024}kbps")
             }
         } else {
             lowBitrateCount = 0
@@ -494,12 +570,13 @@ class StreamManager(
         }
     }
     override fun onDisconnectRtmp() {
-        android.util.Log.w("PB_STREAM", "DISCONNECTED from RTMP! Will retry in 5s. isStreaming=${rtmpCamera?.isStreaming}")
+        android.util.Log.e("PB_STREAM", "⚠️ DISCONNECTED! isStreaming=${rtmpCamera?.isStreaming}, will retry in 5s")
+        android.util.Log.e("PB_STREAM", "  → filterReady=$filterReady, overlayRunning=${overlayRunnable != null}, match=${currentMatch != null}")
         onStatusChange("⚠️ Mất kết nối — đang thử kết nối lại...")
         // Auto-reconnect after 5 seconds
         handler.postDelayed({
             if (rtmpCamera?.isStreaming == false && lastRtmpUrl != null) {
-                android.util.Log.w("PB_VIDEO", "Auto-reconnecting after disconnect...")
+                android.util.Log.w("PB_STREAM", "Auto-reconnecting after disconnect...")
                 rtmpCamera?.reTry(5000, "disconnect")
             }
         }, 5000)

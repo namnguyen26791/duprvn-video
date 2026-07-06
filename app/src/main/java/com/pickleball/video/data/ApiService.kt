@@ -70,6 +70,13 @@ data class DeviceStatusRequest(
     val is_streaming: Boolean = false,
 )
 
+data class StreamConfirmedRequest(
+    val match_id: Int,
+    val match_type: String,
+    val tournament_id: Int,
+    val court_name: String,
+)
+
 data class OverlayConfig(
     val logos: List<OverlayLogo> = emptyList(),
     val marquee_texts: List<String> = emptyList(),
@@ -104,6 +111,9 @@ interface ApiService {
 
     @POST("public/device-status")
     suspend fun reportDeviceStatus(@Body body: DeviceStatusRequest): Unit
+
+    @POST("public/stream-confirmed")
+    suspend fun streamConfirmed(@Body body: StreamConfirmedRequest): Unit
 
     companion object {
         private fun getUnsafeOkHttpClient(): OkHttpClient {

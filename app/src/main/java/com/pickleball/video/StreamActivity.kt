@@ -13,6 +13,7 @@ import androidx.lifecycle.lifecycleScope
 import com.pedro.rtplibrary.view.OpenGlView
 import vn.vdpr.video.data.ApiService
 import vn.vdpr.video.data.DeviceStatusRequest
+import vn.vdpr.video.data.StreamConfirmedRequest
 import vn.vdpr.video.data.FirebaseMatchListener
 import vn.vdpr.video.stream.StreamManager
 import vn.vdpr.video.stream.StreamQuality
@@ -38,6 +39,15 @@ class StreamActivity : AppCompatActivity() {
 
         // Force IPv4 to avoid RTMP connection failures on IPv6-only networks
         System.setProperty("java.net.preferIPv4Stack", "true")
+
+        // Load overlay from disk cache if static fields are empty (process was killed)
+        if (vn.vdpr.video.overlay.ScoreboardOverlay.topRightLogos.isEmpty() &&
+            vn.vdpr.video.overlay.ScoreboardOverlay.bottomRightLogos.isEmpty()) {
+            val loaded = vn.vdpr.video.overlay.OverlayCache.load(this)
+            android.util.Log.i("PB_OVERLAY", "Cache load: $loaded | topLogos=${vn.vdpr.video.overlay.ScoreboardOverlay.topRightLogos.size} bottomLogos=${vn.vdpr.video.overlay.ScoreboardOverlay.bottomRightLogos.size}")
+        } else {
+            android.util.Log.i("PB_OVERLAY", "Overlay already in memory: topLogos=${vn.vdpr.video.overlay.ScoreboardOverlay.topRightLogos.size} bottomLogos=${vn.vdpr.video.overlay.ScoreboardOverlay.bottomRightLogos.size}")
+        }
 
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         requestWindowFeature(Window.FEATURE_NO_TITLE)
@@ -98,7 +108,9 @@ class StreamActivity : AppCompatActivity() {
 
         // Listen Firebase for match by ID (scoreboard overlay)
         lifecycleScope.launch {
+            android.util.Log.i("PB_OVERLAY", "Firebase listener started: matchType=$matchType matchId=$matchId")
             FirebaseMatchListener.observeMatchById(matchType, matchId).collectLatest { match ->
+                android.util.Log.d("PB_OVERLAY", "Firebase emit: ${if (match != null) "${match.left.teamName} ${match.scoreLeft}-${match.scoreRight} ${match.right.teamName} paused=${match.paused}" else "NULL"}")
                 streamManager?.updateMatch(match)
             }
         }
@@ -135,6 +147,15 @@ class StreamActivity : AppCompatActivity() {
                             runOnUiThread {
                                 streamManager?.startStream(config.rtmp_url, config.stream_key)
                             }
+                            // Report stream confirmed to backend
+                            try {
+                                api.streamConfirmed(StreamConfirmedRequest(
+                                    match_id = matchId,
+                                    match_type = matchType,
+                                    tournament_id = tournamentId,
+                                    court_name = courtName,
+                                ))
+                            } catch (_: Exception) {}
                         } else if (config.rtmp_url.isNullOrBlank() || config.stream_key.isNullOrBlank()) {
                             runOnUiThread {
                                 statusText.text = "Đang chờ cấu hình..."
@@ -186,6 +207,23 @@ class StreamActivity : AppCompatActivity() {
         configCheckRunnable?.let { handler.removeCallbacks(it) }
         batteryRunnable?.let { handler.removeCallbacks(it) }
         streamManager?.release()
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        // Single-instance: khi VideoApp launch lại cho trận mới, dừng stream cũ và restart
+        val newMatchId = intent?.getIntExtra("match_id", 0) ?: 0
+        if (newMatchId > 0 && newMatchId != matchId) {
+            android.util.Log.w("PB_VIDEO", "onNewIntent: switching from match $matchId → $newMatchId")
+            // Stop old stream + config polling
+            configCheckRunnable?.let { handler.removeCallbacks(it) }
+            streamManager?.release()
+            isStreaming = false
+            streamEndedConfirmCount = 0
+            // Restart with new intent
+            setIntent(intent)
+            recreate()
+        }
     }
 }
 

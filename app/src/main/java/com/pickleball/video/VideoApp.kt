@@ -132,6 +132,7 @@ fun VideoApp() {
                         autoLaunched = launchKey
                         val tidForStream = if (selectedTournaments.size == 1) selectedTournaments.first() else 0
                         val intent = Intent(context, StreamActivity::class.java).apply {
+                            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                             putExtra("match_id", playing.id)
                             putExtra("match_type", playing.match_type)
                             putExtra("api_base", apiBase)
@@ -376,6 +377,8 @@ fun VideoApp() {
                                             if (mergedBottomBitmaps.isNotEmpty()) vn.vdpr.video.overlay.ScoreboardOverlay.bottomRightLogos = mergedBottomBitmaps
                                             if (mergedMarquee.isNotEmpty()) vn.vdpr.video.overlay.ScoreboardOverlay.marqueeTexts = mergedMarquee
                                             if (mergedPause != null) vn.vdpr.video.overlay.ScoreboardOverlay.pauseImage = mergedPause
+                                            // Persist to disk cache
+                                            vn.vdpr.video.overlay.OverlayCache.save(context)
                                         } catch (_: Exception) {}
                                         step = 2
                                     } catch (e: Exception) { error = "Lỗi: ${e.message}" }
@@ -386,7 +389,15 @@ fun VideoApp() {
                             modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A)),
                         ) { Text("Tiếp tục →", fontWeight = FontWeight.Bold) }
-                        TextButton(onClick = { step = 0; tournamentSearch = ""; selectedTournaments = emptySet() }) { Text("← Quay lại") }
+                        TextButton(onClick = {
+                            step = 0; tournamentSearch = ""; selectedTournaments = emptySet()
+                            // Clear overlay cache khi chọn lại giải
+                            vn.vdpr.video.overlay.OverlayCache.clear(context)
+                            vn.vdpr.video.overlay.ScoreboardOverlay.topRightLogos = emptyList()
+                            vn.vdpr.video.overlay.ScoreboardOverlay.bottomRightLogos = emptyList()
+                            vn.vdpr.video.overlay.ScoreboardOverlay.pauseImage = null
+                            vn.vdpr.video.overlay.ScoreboardOverlay.marqueeTexts = emptyList()
+                        }) { Text("← Quay lại") }
                     }
 
                     2 -> {

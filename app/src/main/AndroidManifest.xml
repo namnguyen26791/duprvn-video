@@ -32,10 +32,11 @@
             </intent-filter>
         </activity>
 
-        <!-- Streaming screen (landscape, fullscreen) -->
+        <!-- Streaming screen (landscape, fullscreen, single-top to avoid duplicates) -->
         <activity
             android:name=".StreamActivity"
             android:exported="false"
+            android:launchMode="singleTop"
             android:screenOrientation="landscape"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:keepScreenOn="true"
