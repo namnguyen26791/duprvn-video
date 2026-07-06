@@ -309,6 +309,7 @@ class StreamManager(
     }
 
     private var overlayBitmap: Bitmap? = null
+    private var glBitmap: Bitmap? = null  // Strong reference cho GL thread
     private val overlayLock = Object()
     private var lastOverlayState = "" // track state changes for logging
 
@@ -335,6 +336,7 @@ class StreamManager(
 
         synchronized(overlayLock) {
             try {
+                // Ensure draw buffer exists
                 if (overlayBitmap == null || overlayBitmap!!.isRecycled || overlayBitmap!!.width != w || overlayBitmap!!.height != h) {
                     overlayBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
                 }
@@ -351,7 +353,11 @@ class StreamManager(
                 } else {
                     ScoreboardOverlay.drawLogosOnly(canvas, w, h)
                 }
-                imageFilter?.setImage(bmp)
+                // Create new bitmap for GL, keep strong reference to prevent GC
+                val newGl = Bitmap.createBitmap(bmp)
+                imageFilter?.setImage(newGl)
+                // Release old GL bitmap only after new one is set
+                glBitmap = newGl
             } catch (e: Exception) {
                 android.util.Log.e("PB_OVERLAY", "refreshOverlay CRASH: ${e.message}")
                 overlayBitmap = null
@@ -515,6 +521,7 @@ class StreamManager(
     override fun onConnectionSuccessRtmp() {
         android.util.Log.i("PB_STREAM", "Connection success! Streaming at ${actualQuality?.label ?: selectedQuality.label}")
         lowBitrateCount = 0
+        connectionFailCount = 0
         val q = actualQuality ?: selectedQuality
         onStatusChange("🔴 LIVE ${q.label}")
         // Force re-setup GL filter after reconnect (old filter may be invalid)
@@ -528,11 +535,18 @@ class StreamManager(
             handler.post { startOverlayLoop() }
         }
     }
+    private var connectionFailCount = 0
+
     override fun onConnectionFailedRtmp(reason: String) {
-        android.util.Log.e("PB_STREAM", "❌ Connection FAILED: $reason")
+        connectionFailCount++
+        android.util.Log.e("PB_STREAM", "❌ Connection FAILED ($connectionFailCount): $reason")
         android.util.Log.e("PB_STREAM", "  → isStreaming=${rtmpCamera?.isStreaming}, lastUrl=${lastRtmpUrl?.take(50)}")
-        onStatusChange("❌ $reason")
-        handler.postDelayed({ rtmpCamera?.reTry(5000, reason) }, 5000)
+        if (connectionFailCount >= 5) {
+            onStatusChange("❌ Không thể kết nối YouTube. Cần tạo broadcast mới từ Manager.")
+        } else {
+            onStatusChange("❌ Mất kết nối (lần $connectionFailCount) — thử lại...")
+            handler.postDelayed({ rtmpCamera?.reTry(5000, reason) }, 5000)
+        }
     }
     override fun onNewBitrateRtmp(bitrate: Long) {
         val q = actualQuality ?: return

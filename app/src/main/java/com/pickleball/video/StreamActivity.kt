@@ -1,5 +1,6 @@
 package vn.vdpr.video
 
+import android.content.Intent
 import android.graphics.Color
 import android.os.BatteryManager
 import android.os.Bundle
@@ -209,10 +210,10 @@ class StreamActivity : AppCompatActivity() {
         streamManager?.release()
     }
 
-    override fun onNewIntent(intent: Intent?) {
+    override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         // Single-instance: khi VideoApp launch lại cho trận mới, dừng stream cũ và restart
-        val newMatchId = intent?.getIntExtra("match_id", 0) ?: 0
+        val newMatchId = intent.getIntExtra("match_id", 0)
         if (newMatchId > 0 && newMatchId != matchId) {
             android.util.Log.w("PB_VIDEO", "onNewIntent: switching from match $matchId → $newMatchId")
             // Stop old stream + config polling
