@@ -127,11 +127,13 @@ class StreamActivity : AppCompatActivity() {
                         val api = ApiService.create(apiBase)
                         val config = api.getMatchStreamConfig(matchId, matchType)
 
-                        // If stream_ended_at is set AND status is done → confirm twice then finish
-                        if (!config.stream_ended_at.isNullOrBlank() && config.status == "done") {
+                        // Tạo lại broadcast / stop-live chỉ set stream_ended_at (status vẫn playing).
+                        // Trước Jul 4 chỉ cần stream_ended_at → đóng activity → Live mở lại bình thường.
+                        // Sau khi thêm && status=="done", recreate không đóng được → không auto live.
+                        if (!config.stream_ended_at.isNullOrBlank()) {
                             streamEndedConfirmCount++
                             if (streamEndedConfirmCount >= 2) {
-                                android.util.Log.w("PB_VIDEO", "configCheck: stream_ended_at='${config.stream_ended_at}', status=done (confirmed) → finishing")
+                                android.util.Log.w("PB_VIDEO", "configCheck: stream_ended_at='${config.stream_ended_at}' → finishing")
                                 runOnUiThread {
                                     streamManager?.release()
                                     finish()
@@ -158,6 +160,11 @@ class StreamActivity : AppCompatActivity() {
                                 ))
                             } catch (_: Exception) {}
                         } else if (config.rtmp_url.isNullOrBlank() || config.stream_key.isNullOrBlank()) {
+                            // Reset broadcast: key bị xóa → cho phép start lại khi có key mới
+                            if (isStreaming) {
+                                isStreaming = false
+                                runOnUiThread { streamManager?.stopStream() }
+                            }
                             runOnUiThread {
                                 statusText.text = "Đang chờ cấu hình..."
                             }
@@ -227,4 +234,3 @@ class StreamActivity : AppCompatActivity() {
         }
     }
 }
-
