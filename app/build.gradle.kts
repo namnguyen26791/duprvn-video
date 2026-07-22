@@ -12,8 +12,8 @@ android {
         applicationId = "vn.vdpr.video"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "1.1.1"
+        versionCode = 13
+        versionName = "1.1.4"
 
         // Firebase + API config from build
         buildConfigField("String", "API_BASE", "\"https://backend.vdpr.vn/api\"")

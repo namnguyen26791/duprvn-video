@@ -62,15 +62,14 @@ fun VideoApp() {
     // Camera selection
     var backCameras by remember { mutableStateOf<List<CameraInfo>>(emptyList()) }
     var selectedCameraId by remember { mutableStateOf("0") }
-    var selectedQuality by remember { mutableStateOf(StreamQuality.Q_1080P) }
-    var supportedQualities by remember { mutableStateOf<List<StreamQuality>>(StreamQuality.all()) }
+    var selectedQuality by remember { mutableStateOf(StreamQuality.Q_720P) }
+    var supportedQualities by remember { mutableStateOf<List<StreamQuality>>(emptyList()) }
     
     LaunchedEffect(Unit) {
         backCameras = StreamManager.getBackCameras(context)
         if (backCameras.isNotEmpty()) selectedCameraId = backCameras.first().id
         supportedQualities = StreamQuality.getSupportedQualities()
-        // Default chọn chất lượng cao nhất mà máy hỗ trợ
-        if (supportedQualities.isNotEmpty()) selectedQuality = supportedQualities.first()
+        selectedQuality = StreamQuality.preferredDefault(supportedQualities)
     }
 
     // Step 3: Poll court matches, auto-launch when a match starts playing
@@ -93,7 +92,10 @@ fun VideoApp() {
                     try {
                         val tName = tournaments.find { it.id == tid }?.name ?: ""
                         val m = ApiService.create(apiBase).getCourtMatches(tid, court)
-                        m.forEach { it.tournamentName = tName }
+                        m.forEach {
+                            it.tournamentName = tName
+                            it.tournament_id = tid
+                        }
                         allMatches.addAll(m)
                     } catch (_: Exception) {}
                 }
@@ -110,7 +112,8 @@ fun VideoApp() {
                     val launchKey = "${playing.id}:${playing.broadcast_id ?: playing.rtmp_url ?: "none"}"
                     if (autoLaunched != launchKey && !playing.rtmp_url.isNullOrBlank()) {
                         autoLaunched = launchKey
-                        val tidForStream = if (selectedTournaments.size == 1) selectedTournaments.first() else 0
+                        val tidForStream = playing.tournament_id
+                            ?: if (selectedTournaments.size == 1) selectedTournaments.first() else 0
                         val intent = Intent(context, StreamActivity::class.java).apply {
                             flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                             putExtra("match_id", playing.id)
@@ -190,9 +193,10 @@ fun VideoApp() {
                             modifier = Modifier.fillMaxWidth(),
                             verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            StreamQuality.all().forEach { q ->
+                            StreamQuality.displayOrder().forEach { q ->
                                 val isSelected = selectedQuality == q
                                 val isSupported = supportedQualities.contains(q)
+                                val isRecommended = q == StreamQuality.Q_720P
                                 Card(
                                     modifier = Modifier.fillMaxWidth().clickable(enabled = isSupported) {
                                         if (isSupported) selectedQuality = q
@@ -209,7 +213,7 @@ fun VideoApp() {
                                     Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(
-                                                q.label,
+                                                if (isRecommended) "${q.label} · Khuyến nghị" else q.label,
                                                 fontSize = 13.sp,
                                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                                 color = if (isSupported) Color.Unspecified else Color(0xFF94A3B8),

@@ -41,6 +41,30 @@ class StreamActivity : AppCompatActivity() {
     private var configCheckRunnable: Runnable? = null
     private var isStreaming = false
 
+    companion object {
+        private const val BATTERY_REPORT_MS = 60_000L
+    }
+
+    private fun applyStreamMeta(tournamentIdFromApi: Int?, courtFromApi: String?) {
+        if (tournamentIdFromApi != null && tournamentIdFromApi > 0) {
+            tournamentId = tournamentIdFromApi
+        }
+        if (!courtFromApi.isNullOrBlank()) {
+            courtName = courtFromApi.trim()
+        }
+    }
+
+    private fun reportBatteryNow() {
+        lifecycleScope.launch {
+            try {
+                val api = ApiService.create(apiBase)
+                reportBattery(api)
+            } catch (e: Exception) {
+                android.util.Log.w("PB_VIDEO", "Battery report failed: ${e.message}")
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -69,8 +93,8 @@ class StreamActivity : AppCompatActivity() {
         tournamentId = intent.getIntExtra("tournament_id", 0)
         courtName = intent.getStringExtra("court_name") ?: "Sân"
         val cameraId = intent.getStringExtra("camera_id") ?: "0"
-        val qualityName = intent.getStringExtra("stream_quality") ?: "Q_1080P"
-        val quality = try { StreamQuality.valueOf(qualityName) } catch (_: Exception) { StreamQuality.Q_1080P }
+        val qualityName = intent.getStringExtra("stream_quality") ?: "Q_720P"
+        val quality = try { StreamQuality.valueOf(qualityName) } catch (_: Exception) { StreamQuality.Q_720P }
 
         val root = FrameLayout(this)
         root.setBackgroundColor(Color.BLACK)
@@ -108,6 +132,7 @@ class StreamActivity : AppCompatActivity() {
                 // Tránh double-poll khi surface recreate
                 if (configCheckRunnable == null) startConfigCheck()
                 if (batteryRunnable == null) startBatteryReport()
+                reportBatteryNow()
             }
             override fun surfaceChanged(h: SurfaceHolder, f: Int, w: Int, ht: Int) {}
             override fun surfaceDestroyed(holder: SurfaceHolder) {
@@ -163,6 +188,7 @@ class StreamActivity : AppCompatActivity() {
                     try {
                         val api = ApiService.create(apiBase)
                         val config = api.getMatchStreamConfig(matchId, matchType)
+                        applyStreamMeta(config.tournament_id, config.court)
 
                         // Tạo lại broadcast / stop-live chỉ set stream_ended_at (status vẫn playing).
                         // Trước Jul 4 chỉ cần stream_ended_at → đóng activity → Live mở lại bình thường.
@@ -189,6 +215,7 @@ class StreamActivity : AppCompatActivity() {
                                 startKeepAlive()
                                 streamManager?.startStream(config.rtmp_url, config.stream_key)
                             }
+                            reportBatteryNow()
                             // Report stream confirmed to backend
                             try {
                                 api.streamConfirmed(StreamConfirmedRequest(
@@ -229,27 +256,24 @@ class StreamActivity : AppCompatActivity() {
     private fun startBatteryReport() {
         batteryRunnable = object : Runnable {
             override fun run() {
-                lifecycleScope.launch {
-                    val api = ApiService.create(apiBase)
-                    reportBattery(api)
-                }
-                handler.postDelayed(this, 180_000) // every 3 minutes
+                reportBatteryNow()
+                handler.postDelayed(this, BATTERY_REPORT_MS)
             }
         }
-        handler.post(batteryRunnable!!)
+        handler.postDelayed(batteryRunnable!!, BATTERY_REPORT_MS)
     }
 
     private suspend fun reportBattery(api: ApiService) {
-        try {
-            val bm = getSystemService(BATTERY_SERVICE) as BatteryManager
-            val level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-            api.reportDeviceStatus(DeviceStatusRequest(
-                tournament_id = tournamentId,
-                court_name = courtName,
-                battery_level = level,
-                is_streaming = isStreaming,
-            ))
-        } catch (_: Exception) {}
+        if (tournamentId <= 0) return
+        val bm = getSystemService(BATTERY_SERVICE) as BatteryManager
+        val level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        if (level < 0 || level > 100) return
+        api.reportDeviceStatus(DeviceStatusRequest(
+            tournament_id = tournamentId,
+            court_name = courtName.trim(),
+            battery_level = level,
+            is_streaming = isStreaming && (streamManager?.isStreaming() == true),
+        ))
     }
 
     override fun onDestroy() {

@@ -11,6 +11,7 @@ import com.pedro.encoder.utils.gl.TranslateTo
 import com.pedro.rtmp.utils.ConnectCheckerRtmp
 import com.pedro.rtplibrary.rtmp.RtmpCamera2
 import com.pedro.rtplibrary.view.OpenGlView
+import vn.vdpr.video.R
 import vn.vdpr.video.data.MatchState
 import vn.vdpr.video.overlay.BitmapUtils
 import vn.vdpr.video.overlay.ScoreboardOverlay
@@ -25,6 +26,16 @@ enum class StreamQuality(val width: Int, val height: Int, val bitrate: Int, val 
 
     companion object {
         fun all() = values().toList()
+
+        /** Mặc định luôn 720p nếu hỗ trợ; không thì chọn độ phân giải thấp nhất. */
+        fun preferredDefault(supported: List<StreamQuality>): StreamQuality {
+            if (supported.isEmpty()) return Q_720P
+            if (supported.contains(Q_720P)) return Q_720P
+            return supported.minByOrNull { it.height } ?: Q_720P
+        }
+
+        /** Thứ tự hiển thị UI — 720p lên đầu (khuyến nghị). */
+        fun displayOrder() = listOf(Q_720P, Q_1080P, Q_2K, Q_4K)
 
         /**
          * Kiểm tra phần cứng encoder H.264 hỗ trợ resolution nào.
@@ -68,7 +79,7 @@ class StreamManager(
     private val onStatusChange: (String) -> Unit,
 ) : ConnectCheckerRtmp {
 
-    var selectedQuality: StreamQuality = StreamQuality.Q_1080P
+    var selectedQuality: StreamQuality = StreamQuality.Q_720P
     var actualQuality: StreamQuality? = null; private set
 
     private var rtmpCamera: RtmpCamera2? = null
@@ -160,17 +171,17 @@ class StreamManager(
         this.courtName = courtName
         this.selectedCameraId = cameraId
         rtmpCamera = RtmpCamera2(openGlView, this)
+        ThermalHelper.start(context)
         loadPickbaseLogo()
         android.util.Log.i("PB_OVERLAY", "StreamManager.init: court=$courtName camera=$cameraId quality=${selectedQuality.label} topLogos=${ScoreboardOverlay.topRightLogos.size} bottomLogos=${ScoreboardOverlay.bottomRightLogos.size} pauseImg=${ScoreboardOverlay.pauseImage != null} marquee=${ScoreboardOverlay.marqueeTexts.size}")
     }
 
-    /** Load PickBase logo from drawable */
+    /** Logo mặc định từ res/drawable/logo.png */
     private fun loadPickbaseLogo() {
         try {
-            ScoreboardOverlay.pickbaseLogo = BitmapFactory.decodeResource(context.resources,
-                context.resources.getIdentifier("pickbase", "drawable", context.packageName))
+            ScoreboardOverlay.pickbaseLogo = BitmapFactory.decodeResource(context.resources, R.drawable.logo)
         } catch (e: Exception) {
-            android.util.Log.w("PB_VIDEO", "Failed to load pickbase logo: ${e.message}")
+            android.util.Log.w("PB_VIDEO", "Failed to load logo: ${e.message}")
         }
     }
 
@@ -416,7 +427,7 @@ class StreamManager(
         val startIndex = qualities.indexOf(selectedQuality)
         for (i in startIndex until qualities.size) {
             val q = qualities[i]
-            if (camera.prepareVideo(q.width, q.height, q.fps, q.bitrate, 0) &&
+            if (camera.prepareVideo(q.width, q.height, q.fps, scaledBitrate(q.bitrate), 0) &&
                 camera.prepareAudio(192 * 1024, 44100, false)) {
                 if (q != selectedQuality) {
                     onStatusChange("⚠️ ${selectedQuality.label} không hỗ trợ, dùng ${q.label}")
@@ -425,6 +436,22 @@ class StreamManager(
             }
         }
         return null
+    }
+
+    private fun scaledBitrate(base: Int): Int {
+        return (base * ThermalHelper.bitrateScale()).toInt().coerceAtLeast(1500 * 1024)
+    }
+
+    private fun applyThermalBitrateCap() {
+        val q = actualQuality ?: return
+        val camera = rtmpCamera ?: return
+        if (!camera.isStreaming) return
+        val target = scaledBitrate(q.bitrate)
+        val current = camera.getBitrate()
+        if (current > target * 1.1) {
+            camera.setVideoBitrateOnFly(target)
+            android.util.Log.i("PB_THERMAL", "Cap bitrate ${current / 1024}→${target / 1024} kbps (thermal=${ThermalHelper.level})")
+        }
     }
 
     fun startPreview() {
@@ -495,14 +522,18 @@ class StreamManager(
                 }
                 refreshOverlay()
                 overlayFrameCount++
+                if (ThermalHelper.shouldThrottle()) {
+                    applyThermalBitrateCap()
+                }
                 if (overlayFrameCount % 1500 == 0L) {
                     val runtime = Runtime.getRuntime()
                     val usedMB = (runtime.totalMemory() - runtime.freeMemory()) / 1048576
                     val maxMB = runtime.maxMemory() / 1048576
                     android.util.Log.i("PB_STREAM", "Health check: frames=$overlayFrameCount, mem=${usedMB}/${maxMB}MB, streaming=${rtmpCamera?.isStreaming}, bitrate=${rtmpCamera?.getBitrate()}, filterReady=$filterReady, hasMatch=${currentMatch != null}")
                 }
-                // Marquee cần nhịp nhanh hơn; không marquee thì chậm lại để giảm tải
-                val delayMs = if (ScoreboardOverlay.hasMarquee()) 120L else 400L
+                // Marquee nhanh hơn; không marquee chậm hơn; máy nóng chậm thêm
+                val baseDelay = if (ScoreboardOverlay.hasMarquee()) 120L else 400L
+                val delayMs = baseDelay * ThermalHelper.overlayDelayMultiplier()
                 handler.postDelayed(this, delayMs)
             }
         }
@@ -527,6 +558,7 @@ class StreamManager(
             }
         }
         ScoreboardOverlay.clearLogoScaleCache()
+        ThermalHelper.stop(context)
         filterReady = false
         imageFilter = null
         lastContentKey = ""
