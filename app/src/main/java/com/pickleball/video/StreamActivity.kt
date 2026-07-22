@@ -17,9 +17,15 @@ import vn.vdpr.video.data.DeviceStatusRequest
 import vn.vdpr.video.data.StreamConfirmedRequest
 import vn.vdpr.video.data.FirebaseMatchListener
 import vn.vdpr.video.stream.StreamManager
+import vn.vdpr.video.stream.StreamKeepAliveService
 import vn.vdpr.video.stream.StreamQuality
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import androidx.core.content.ContextCompat
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.result.contract.ActivityResultContracts
 
 class StreamActivity : AppCompatActivity() {
 
@@ -98,13 +104,19 @@ class StreamActivity : AppCompatActivity() {
         openGlView.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 streamManager?.startPreview()
-                // Don't start stream immediately — wait for polling to get config
                 statusText.text = "Đang chờ cấu hình..."
-                startConfigCheck()
-                startBatteryReport()
+                // Tránh double-poll khi surface recreate
+                if (configCheckRunnable == null) startConfigCheck()
+                if (batteryRunnable == null) startBatteryReport()
             }
             override fun surfaceChanged(h: SurfaceHolder, f: Int, w: Int, ht: Int) {}
-            override fun surfaceDestroyed(holder: SurfaceHolder) { streamManager?.release() }
+            override fun surfaceDestroyed(holder: SurfaceHolder) {
+                // Surface có thể recreate tạm thời — chỉ full release khi activity đang đóng
+                if (isFinishing) {
+                    stopKeepAlive()
+                    streamManager?.release()
+                }
+            }
         })
 
         // Listen Firebase for match by ID (scoreboard overlay)
@@ -118,6 +130,31 @@ class StreamActivity : AppCompatActivity() {
     }
 
     private var streamEndedConfirmCount = 0
+    private var keepAliveStarted = false
+
+    private val notifPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* foreground service vẫn chạy; notification có thể bị ẩn nếu từ chối */ }
+
+    private fun ensureNotificationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+            == PackageManager.PERMISSION_GRANTED) return
+        notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    private fun startKeepAlive() {
+        if (keepAliveStarted) return
+        keepAliveStarted = true
+        ensureNotificationPermission()
+        StreamKeepAliveService.start(this, courtName, matchId)
+    }
+
+    private fun stopKeepAlive() {
+        if (!keepAliveStarted) return
+        keepAliveStarted = false
+        StreamKeepAliveService.stop(this)
+    }
 
     private fun startConfigCheck() {
         configCheckRunnable = object : Runnable {
@@ -135,6 +172,7 @@ class StreamActivity : AppCompatActivity() {
                             if (streamEndedConfirmCount >= 2) {
                                 android.util.Log.w("PB_VIDEO", "configCheck: stream_ended_at='${config.stream_ended_at}' → finishing")
                                 runOnUiThread {
+                                    stopKeepAlive()
                                     streamManager?.release()
                                     finish()
                                 }
@@ -148,6 +186,7 @@ class StreamActivity : AppCompatActivity() {
                         if (!config.rtmp_url.isNullOrBlank() && !config.stream_key.isNullOrBlank() && !isStreaming) {
                             isStreaming = true
                             runOnUiThread {
+                                startKeepAlive()
                                 streamManager?.startStream(config.rtmp_url, config.stream_key)
                             }
                             // Report stream confirmed to backend
@@ -163,7 +202,10 @@ class StreamActivity : AppCompatActivity() {
                             // Reset broadcast: key bị xóa → cho phép start lại khi có key mới
                             if (isStreaming) {
                                 isStreaming = false
-                                runOnUiThread { streamManager?.stopStream() }
+                                runOnUiThread {
+                                    stopKeepAlive()
+                                    streamManager?.stopStream()
+                                }
                             }
                             runOnUiThread {
                                 statusText.text = "Đang chờ cấu hình..."
@@ -214,6 +256,7 @@ class StreamActivity : AppCompatActivity() {
         super.onDestroy()
         configCheckRunnable?.let { handler.removeCallbacks(it) }
         batteryRunnable?.let { handler.removeCallbacks(it) }
+        stopKeepAlive()
         streamManager?.release()
     }
 
@@ -225,6 +268,10 @@ class StreamActivity : AppCompatActivity() {
             android.util.Log.w("PB_VIDEO", "onNewIntent: switching from match $matchId → $newMatchId")
             // Stop old stream + config polling
             configCheckRunnable?.let { handler.removeCallbacks(it) }
+            configCheckRunnable = null
+            batteryRunnable?.let { handler.removeCallbacks(it) }
+            batteryRunnable = null
+            stopKeepAlive()
             streamManager?.release()
             isStreaming = false
             streamEndedConfirmCount = 0

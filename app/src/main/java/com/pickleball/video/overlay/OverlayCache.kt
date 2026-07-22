@@ -67,7 +67,9 @@ object OverlayCache {
             for (i in 0 until topCount) {
                 val f = File(dir, "top_right_$i.png")
                 if (f.exists()) {
-                    BitmapFactory.decodeFile(f.absolutePath)?.let { topList.add(it) }
+                    BitmapFactory.decodeFile(f.absolutePath)?.let {
+                        topList.add(BitmapUtils.clampToMaxEdge(it, BitmapUtils.MAX_LOGO_EDGE))
+                    }
                 }
             }
             if (topList.isNotEmpty()) {
@@ -80,7 +82,9 @@ object OverlayCache {
             for (i in 0 until bottomCount) {
                 val f = File(dir, "bottom_right_$i.png")
                 if (f.exists()) {
-                    BitmapFactory.decodeFile(f.absolutePath)?.let { bottomList.add(it) }
+                    BitmapFactory.decodeFile(f.absolutePath)?.let {
+                        bottomList.add(BitmapUtils.clampToMaxEdge(it, BitmapUtils.MAX_LOGO_EDGE))
+                    }
                 }
             }
             if (bottomList.isNotEmpty()) {
@@ -91,7 +95,9 @@ object OverlayCache {
             // Load pause image
             val pauseFile = File(dir, "pause.png")
             if (pauseFile.exists()) {
-                ScoreboardOverlay.pauseImage = BitmapFactory.decodeFile(pauseFile.absolutePath)
+                ScoreboardOverlay.pauseImage = BitmapFactory.decodeFile(pauseFile.absolutePath)?.let {
+                    BitmapUtils.clampToMaxEdge(it, BitmapUtils.MAX_PAUSE_EDGE)
+                }
             }
 
             // Load marquee texts

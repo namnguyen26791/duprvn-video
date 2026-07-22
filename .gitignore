@@ -1,54 +1,65 @@
-# Gradle
+# ─── Gradle (cache local — KHÔNG ignore gradlew / gradle/wrapper) ───
 .gradle/
+**/.gradle/
+.gradletasknamecache
+gradle-app.setting
+
+# ─── Build output ───
 build/
-*/build/
-
-# Local configuration
-local.properties
-
-# Android Studio
-.idea/
-*.iml
-
-# Keystore
-# *.jks
-# *.keystore
-
-# Generated files
+**/build/
+app/release/
+**/release/
+**/debug/
+**/intermediates/
+**/outputs/
+**/generated/
+**/tmp/
 captures/
+
+# ─── Android Studio / IntelliJ ───
+.idea/
+**/.idea/
+*.iml
+*.ipr
+*.iws
+.navigation/
+*.hprof
+
+# ─── Local SDK path (mỗi máy khác nhau) ───
+local.properties
+**/local.properties
+
+# ─── Native / NDK ───
 .externalNativeBuild/
 .cxx/
+**/.cxx/
+obj/
+**/obj/
 
-# APK/AAB
+# ─── Kotlin ───
+.kotlin/
+**/.kotlin/
+
+# ─── APK / AAB ───
 *.apk
 *.aab
 *.ap_
 
-# Logs
-*.log
+# ─── Keystore (giữ pickbase-release.jks trong repo) ───
+*.jks
+!pickbase-release.jks
+*.keystore
 
-# OS
-.DS_Store
-Thumbs.db
-
-# Kotlin
-.kotlin/
-
-# NDK
-obj/
-
-# Firebase
+# ─── Firebase / secrets ───
 google-services.json
-# Nếu app public hoặc nhiều dev cùng dùng thì có thể commit file này.
-# Nếu chứa config riêng từng môi trường thì nên ignore.
-
-# Secrets
 secrets.properties
 .env
 .env.*
 
+# ─── Logs / OS ───
+*.log
+.DS_Store
+Thumbs.db
+
 # Crashlytics
 com_crashlytics_export_strings.xml
-
-# Android Studio cache
-.navigation/

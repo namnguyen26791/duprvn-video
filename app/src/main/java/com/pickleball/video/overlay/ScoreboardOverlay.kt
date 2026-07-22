@@ -16,10 +16,44 @@ object ScoreboardOverlay {
     var pickbaseLogo: Bitmap? = null
     var tournamentLogo: Bitmap? = null
     var topRightLogos: List<Bitmap> = emptyList()
+        set(value) {
+            field = value
+            clearLogoScaleCache()
+        }
     var bottomRightLogos: List<Bitmap> = emptyList()
+        set(value) {
+            field = value
+            clearLogoScaleCache()
+        }
     var marqueeTexts: List<String> = emptyList()
     var pauseImage: Bitmap? = null
     private var marqueeOffset = 0f
+
+    /** Cache logo đã scale theo kích thước vẽ — tránh createScaledBitmap mỗi frame. */
+    private val logoScaleCache = HashMap<String, Bitmap>()
+
+    fun clearLogoScaleCache() {
+        logoScaleCache.values.forEach { bmp ->
+            try {
+                if (!bmp.isRecycled) bmp.recycle()
+            } catch (_: Exception) {}
+        }
+        logoScaleCache.clear()
+    }
+
+    fun hasMarquee(): Boolean = marqueeTexts.isNotEmpty()
+
+    private fun scaledLogo(src: Bitmap, targetW: Int, targetH: Int): Bitmap? {
+        if (src.isRecycled || src.width <= 0 || src.height <= 0 || targetW <= 0 || targetH <= 0) return null
+        if (src.width == targetW && src.height == targetH) return src
+        val key = "${System.identityHashCode(src)}:${targetW}x${targetH}"
+        logoScaleCache[key]?.let { cached ->
+            if (!cached.isRecycled) return cached
+        }
+        val scaled = Bitmap.createScaledBitmap(src, targetW, targetH, true)
+        logoScaleCache[key] = scaled
+        return scaled
+    }
 
     fun draw(canvas: Canvas, width: Int, height: Int, match: MatchState) {
         val s = height / 720f
@@ -140,11 +174,10 @@ object ScoreboardOverlay {
         val activeTopLogos = if (topRightLogos.isNotEmpty()) topRightLogos else listOfNotNull(pickbaseLogo)
         var topLogoX = width.toFloat() - margin
         for (logo in activeTopLogos.reversed()) {
-            val logoH = (81f * s).toInt()
-            val logoW = (logoH.toFloat() * logo.width / logo.height).toInt()
-            val scaled = if (logo.width < logoW * 2) {
-                Bitmap.createScaledBitmap(logo, logoW, logoH, true)
-            } else logo
+            if (logo.isRecycled || logo.height <= 0 || logo.width <= 0) continue
+            val logoH = (81f * s).toInt().coerceAtLeast(1)
+            val logoW = (logoH.toFloat() * logo.width / logo.height).toInt().coerceAtLeast(1)
+            val scaled = scaledLogo(logo, logoW, logoH) ?: continue
             topLogoX -= logoW
             val dst = RectF(topLogoX, margin, topLogoX + logoW, margin + logoH.toFloat())
             canvas.drawBitmap(scaled, null, dst, logoPaint)
@@ -156,11 +189,10 @@ object ScoreboardOverlay {
         var bottomLogoX = width.toFloat() - margin
         val bottomLogoY = height - 50f * s - 65f * s
         for (logo in activeBottomLogos.reversed()) {
-            val tLogoH = (65f * s).toInt()
-            val tLogoW = (tLogoH.toFloat() * logo.width / logo.height).toInt()
-            val scaled = if (logo.width < tLogoW * 2) {
-                Bitmap.createScaledBitmap(logo, tLogoW, tLogoH, true)
-            } else logo
+            if (logo.isRecycled || logo.height <= 0 || logo.width <= 0) continue
+            val tLogoH = (65f * s).toInt().coerceAtLeast(1)
+            val tLogoW = (tLogoH.toFloat() * logo.width / logo.height).toInt().coerceAtLeast(1)
+            val scaled = scaledLogo(logo, tLogoW, tLogoH) ?: continue
             bottomLogoX -= tLogoW
             val dst = RectF(bottomLogoX, bottomLogoY, bottomLogoX + tLogoW, bottomLogoY + tLogoH.toFloat())
             canvas.drawBitmap(scaled, null, dst, logoPaint)
@@ -196,6 +228,7 @@ object ScoreboardOverlay {
 
         // If pause image is configured, show it centered
         pauseImage?.let { img ->
+            if (img.isRecycled || img.width <= 0 || img.height <= 0) return@let
             val s = height / 720f
             val imgW = width * 0.70f
             val imgH = imgW * img.height / img.width

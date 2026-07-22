@@ -27,28 +27,8 @@ import vn.vdpr.video.stream.StreamQuality
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private fun loadBitmapFromUrl(imageUrl: String): android.graphics.Bitmap? {
-    return try {
-        val url = java.net.URL(imageUrl)
-        val connection = url.openConnection()
-        if (connection is javax.net.ssl.HttpsURLConnection) {
-            val trustAll = arrayOf<javax.net.ssl.TrustManager>(object : javax.net.ssl.X509TrustManager {
-                override fun checkClientTrusted(chain: Array<out java.security.cert.X509Certificate>?, authType: String?) {}
-                override fun checkServerTrusted(chain: Array<out java.security.cert.X509Certificate>?, authType: String?) {}
-                override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
-            })
-            val sslCtx = javax.net.ssl.SSLContext.getInstance("TLS")
-            sslCtx.init(null, trustAll, java.security.SecureRandom())
-            connection.sslSocketFactory = sslCtx.socketFactory
-            connection.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
-        }
-        connection.connectTimeout = 5000
-        connection.readTimeout = 5000
-        val input = connection.getInputStream()
-        val bmp = android.graphics.BitmapFactory.decodeStream(input)
-        input.close()
-        bmp
-    } catch (_: Exception) { null }
+private fun loadBitmapFromUrl(imageUrl: String, maxEdge: Int = vn.vdpr.video.overlay.BitmapUtils.MAX_LOGO_EDGE): android.graphics.Bitmap? {
+    return vn.vdpr.video.overlay.BitmapUtils.loadUrl(imageUrl, maxEdge)
 }
 
 @Composable
@@ -363,7 +343,10 @@ fun VideoApp() {
                                                         }
                                                         if (mergedPause == null) {
                                                             overlay.logos.firstOrNull { it.position == "pause" }?.let { pauseLogo ->
-                                                                mergedPause = loadBitmapFromUrl(pauseLogo.url)
+                                                                mergedPause = loadBitmapFromUrl(
+                                                                    pauseLogo.url,
+                                                                    vn.vdpr.video.overlay.BitmapUtils.MAX_PAUSE_EDGE
+                                                                )
                                                             }
                                                         }
                                                     }

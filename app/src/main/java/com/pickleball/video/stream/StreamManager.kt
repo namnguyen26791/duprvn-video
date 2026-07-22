@@ -12,6 +12,7 @@ import com.pedro.rtmp.utils.ConnectCheckerRtmp
 import com.pedro.rtplibrary.rtmp.RtmpCamera2
 import com.pedro.rtplibrary.view.OpenGlView
 import vn.vdpr.video.data.MatchState
+import vn.vdpr.video.overlay.BitmapUtils
 import vn.vdpr.video.overlay.ScoreboardOverlay
 
 data class CameraInfo(val id: String, val label: String, val focalLength: Float)
@@ -190,7 +191,7 @@ class StreamManager(
                 val topLogos = config.logos.filter { it.position == "top_right" }
                 val loadedTop = mutableListOf<Bitmap>()
                 for (logo in topLogos) {
-                    loadImageFromUrl(logo.url) { bmp -> loadedTop.add(bmp) }
+                    loadImageFromUrl(logo.url, BitmapUtils.MAX_LOGO_EDGE) { bmp -> loadedTop.add(bmp) }
                 }
                 if (loadedTop.isNotEmpty()) {
                     ScoreboardOverlay.topRightLogos = loadedTop
@@ -201,7 +202,7 @@ class StreamManager(
                 val bottomLogos = config.logos.filter { it.position == "bottom_right" }
                 val loadedBottom = mutableListOf<Bitmap>()
                 for (logo in bottomLogos) {
-                    loadImageFromUrl(logo.url) { bmp -> loadedBottom.add(bmp) }
+                    loadImageFromUrl(logo.url, BitmapUtils.MAX_LOGO_EDGE) { bmp -> loadedBottom.add(bmp) }
                 }
                 if (loadedBottom.isNotEmpty()) {
                     ScoreboardOverlay.bottomRightLogos = loadedBottom
@@ -210,7 +211,7 @@ class StreamManager(
 
                 // Pause image
                 config.logos.firstOrNull { it.position == "pause" }?.let { logo ->
-                    loadImageFromUrl(logo.url) { bmp -> ScoreboardOverlay.pauseImage = bmp }
+                    loadImageFromUrl(logo.url, BitmapUtils.MAX_PAUSE_EDGE) { bmp -> ScoreboardOverlay.pauseImage = bmp }
                 }
 
                 // Set marquee texts
@@ -218,36 +219,19 @@ class StreamManager(
                     ScoreboardOverlay.marqueeTexts = config.marquee_texts
                 }
                 android.util.Log.d("PB_VIDEO", "Overlay config loaded: ${config.logos.size} logos, ${config.marquee_texts.size} texts, topRight=${loadedTop.size}, bottomRight=${loadedBottom.size}")
+                handler.post {
+                    overlayDirty = true
+                    refreshOverlay(force = true)
+                }
             } catch (e: Exception) {
                 android.util.Log.w("PB_VIDEO", "Failed to load overlay config: ${e.message}")
             }
         }.start()
     }
 
-    private fun loadImageFromUrl(imageUrl: String, onLoaded: (Bitmap) -> Unit) {
-        try {
-            val url = java.net.URL(imageUrl)
-            val connection = url.openConnection()
-            if (connection is javax.net.ssl.HttpsURLConnection) {
-                val trustAll = arrayOf<javax.net.ssl.TrustManager>(object : javax.net.ssl.X509TrustManager {
-                    override fun checkClientTrusted(chain: Array<out java.security.cert.X509Certificate>?, authType: String?) {}
-                    override fun checkServerTrusted(chain: Array<out java.security.cert.X509Certificate>?, authType: String?) {}
-                    override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
-                })
-                val sslCtx = javax.net.ssl.SSLContext.getInstance("TLS")
-                sslCtx.init(null, trustAll, java.security.SecureRandom())
-                connection.sslSocketFactory = sslCtx.socketFactory
-                connection.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
-            }
-            connection.connectTimeout = 5000
-            connection.readTimeout = 5000
-            val input = connection.getInputStream()
-            val bitmap = BitmapFactory.decodeStream(input)
-            input.close()
-            if (bitmap != null) onLoaded(bitmap)
-        } catch (e: Exception) {
-            android.util.Log.w("PB_VIDEO", "Failed to load image: $imageUrl - ${e.message}")
-        }
+    private fun loadImageFromUrl(imageUrl: String, maxEdge: Int, onLoaded: (Bitmap) -> Unit) {
+        val bitmap = BitmapUtils.loadUrl(imageUrl, maxEdge)
+        if (bitmap != null) onLoaded(bitmap)
     }
 
     fun updateMatch(match: MatchState?) {
@@ -258,6 +242,7 @@ class StreamManager(
             }
             lastMatchReceivedAt = System.currentTimeMillis()
             currentMatch = match
+            overlayDirty = true
         } else {
             // Firebase emit null → debounce 3s trước khi clear scoreboard
             val elapsed = System.currentTimeMillis() - lastMatchReceivedAt
@@ -269,6 +254,7 @@ class StreamManager(
                 android.util.Log.w("PB_OVERLAY", "⏹ Scoreboard OFF: Firebase null for ${elapsed}ms, clearing")
             }
             currentMatch = null
+            overlayDirty = true
         }
         refreshOverlay()
     }
@@ -278,7 +264,8 @@ class StreamManager(
         android.util.Log.i("PB_OVERLAY", "🔄 clearMatch: switching to new match")
         currentMatch = null
         lastMatchReceivedAt = 0L
-        refreshOverlay()
+        overlayDirty = true
+        refreshOverlay(force = true)
     }
 
     private var lastMatchReceivedAt = 0L
@@ -308,22 +295,58 @@ class StreamManager(
         }
     }
 
-    private var overlayBitmap: Bitmap? = null
-    private var glBitmap: Bitmap? = null  // Strong reference cho GL thread
+    private var overlayBuffers = arrayOfNulls<Bitmap>(2)
+    private var overlayBufferIdx = 0
     private val overlayLock = Object()
     private var lastOverlayState = "" // track state changes for logging
+    private var lastContentKey = ""
+    private var overlayDirty = true
 
-    private fun refreshOverlay() {
+    private fun matchContentKey(m: MatchState?): String {
+        if (m == null) return "logos_only"
+        return buildString {
+            append(m.left.teamName).append('|')
+            append(m.right.teamName).append('|')
+            append(m.scoreLeft).append('-').append(m.scoreRight).append('|')
+            append(m.serve).append('|').append(m.serverNum).append('|')
+            append(m.paused).append('|')
+            append(m.matchFormat).append('|')
+            append(m.tournamentName ?: "").append('|')
+            append(m.roundName ?: "")
+        }
+    }
+
+    private fun obtainOverlayBuffer(w: Int, h: Int): Bitmap {
+        val idx = overlayBufferIdx
+        overlayBufferIdx = 1 - overlayBufferIdx
+        var bmp = overlayBuffers[idx]
+        if (bmp == null || bmp.isRecycled || bmp.width != w || bmp.height != h) {
+            bmp?.let {
+                try { if (!it.isRecycled) it.recycle() } catch (_: Exception) {}
+            }
+            bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            overlayBuffers[idx] = bmp
+        }
+        return bmp
+    }
+
+    private fun refreshOverlay(force: Boolean = false) {
         if (!filterReady) {
             setupFilter()
             if (!filterReady) return
         }
         val m = currentMatch
+        val contentKey = matchContentKey(m)
+        val contentChanged = contentKey != lastContentKey
+        val needMarquee = ScoreboardOverlay.hasMarquee()
+
+        // Không đổi điểm/tên và không có marquee → bỏ frame (giảm nháy + CPU)
+        if (!force && !overlayDirty && !contentChanged && !needMarquee) return
 
         val q = actualQuality ?: selectedQuality
-        val w = q.width; val h = q.height
+        val w = q.width
+        val h = q.height
 
-        // Log state transitions
         val stateKey = when {
             m != null && m.paused -> "paused"
             m != null -> "playing:${m.scoreLeft}-${m.scoreRight}"
@@ -336,15 +359,7 @@ class StreamManager(
 
         synchronized(overlayLock) {
             try {
-                // Ensure draw buffer exists
-                if (overlayBitmap == null || overlayBitmap!!.isRecycled || overlayBitmap!!.width != w || overlayBitmap!!.height != h) {
-                    overlayBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                }
-                val bmp = overlayBitmap ?: return
-                if (bmp.isRecycled) {
-                    overlayBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                    return
-                }
+                val bmp = obtainOverlayBuffer(w, h)
                 val canvas = Canvas(bmp)
                 canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
                 if (m != null) {
@@ -353,14 +368,13 @@ class StreamManager(
                 } else {
                     ScoreboardOverlay.drawLogosOnly(canvas, w, h)
                 }
-                // Create new bitmap for GL, keep strong reference to prevent GC
-                val newGl = Bitmap.createBitmap(bmp)
-                imageFilter?.setImage(newGl)
-                // Release old GL bitmap only after new one is set
-                glBitmap = newGl
+                // Ping-pong buffer — không copy bitmap mỗi frame
+                imageFilter?.setImage(bmp)
+                lastContentKey = contentKey
+                overlayDirty = false
             } catch (e: Exception) {
                 android.util.Log.e("PB_OVERLAY", "refreshOverlay CRASH: ${e.message}")
-                overlayBitmap = null
+                overlayDirty = true
             }
         }
     }
@@ -476,26 +490,20 @@ class StreamManager(
     private fun startOverlayLoop() {
         overlayRunnable = object : Runnable {
             override fun run() {
-                // Retry setup filter if not ready yet (GL context might not be available immediately)
                 if (!filterReady) {
                     setupFilter()
                 }
-                // Debounce: nếu Firebase null quá 5s thì clear scoreboard
-                if (currentMatch != null && lastMatchReceivedAt > 0) {
-                    // Still have match → fine
-                } else if (currentMatch == null && lastMatchReceivedAt > 0) {
-                    // Already cleared
-                }
                 refreshOverlay()
                 overlayFrameCount++
-                // Log stream health every 5 minutes (1500 frames at 200ms interval)
                 if (overlayFrameCount % 1500 == 0L) {
                     val runtime = Runtime.getRuntime()
                     val usedMB = (runtime.totalMemory() - runtime.freeMemory()) / 1048576
                     val maxMB = runtime.maxMemory() / 1048576
                     android.util.Log.i("PB_STREAM", "Health check: frames=$overlayFrameCount, mem=${usedMB}/${maxMB}MB, streaming=${rtmpCamera?.isStreaming}, bitrate=${rtmpCamera?.getBitrate()}, filterReady=$filterReady, hasMatch=${currentMatch != null}")
                 }
-                handler.postDelayed(this, 200)
+                // Marquee cần nhịp nhanh hơn; không marquee thì chậm lại để giảm tải
+                val delayMs = if (ScoreboardOverlay.hasMarquee()) 120L else 400L
+                handler.postDelayed(this, delayMs)
             }
         }
         handler.post(overlayRunnable!!)
@@ -512,6 +520,17 @@ class StreamManager(
         stopOverlayLoop()
         try { if (rtmpCamera?.isStreaming == true) rtmpCamera?.stopStream(); rtmpCamera?.stopPreview() }
         catch (e: Exception) { android.util.Log.e("PB_STREAM", "release error: ${e.message}") }
+        synchronized(overlayLock) {
+            overlayBuffers.forEachIndexed { i, bmp ->
+                try { if (bmp != null && !bmp.isRecycled) bmp.recycle() } catch (_: Exception) {}
+                overlayBuffers[i] = null
+            }
+        }
+        ScoreboardOverlay.clearLogoScaleCache()
+        filterReady = false
+        imageFilter = null
+        lastContentKey = ""
+        overlayDirty = true
     }
 
     override fun onConnectionStartedRtmp(rtmpUrl: String) {
