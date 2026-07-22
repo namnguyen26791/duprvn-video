@@ -88,7 +88,7 @@ object ScoreboardOverlay {
     private fun drawScoreboard(canvas: Canvas, match: MatchState, s: Float, margin: Float, screenW: Int) {
         val pad = 10f * s
         val cornerR = 8f * s
-        val boxW = screenW * 0.30f
+        val boxW = screenW * 0.33f // +10% so với 0.30
         val boxX = margin
         val rowH = 32f * s
         val scoreColW = 46f * s

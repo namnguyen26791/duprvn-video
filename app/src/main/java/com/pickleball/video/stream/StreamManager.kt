@@ -27,21 +27,20 @@ enum class StreamQuality(val width: Int, val height: Int, val bitrate: Int, val 
     companion object {
         fun all() = values().toList()
 
-        /** Mặc định luôn 720p nếu hỗ trợ; không thì chọn độ phân giải thấp nhất. */
+        /** Mặc định 720p nếu hỗ trợ — máy ít nóng hơn; user vẫn chọn 4K được. */
         fun preferredDefault(supported: List<StreamQuality>): StreamQuality {
             if (supported.isEmpty()) return Q_720P
             if (supported.contains(Q_720P)) return Q_720P
             return supported.minByOrNull { it.height } ?: Q_720P
         }
 
-        /** Thứ tự hiển thị UI — 720p lên đầu (khuyến nghị). */
         fun displayOrder() = listOf(Q_720P, Q_1080P, Q_2K, Q_4K)
 
         /**
-         * Kiểm tra phần cứng encoder H.264 hỗ trợ resolution nào.
-         * Trả về danh sách StreamQuality mà máy có thể encode được (hardware).
+         * Theo encoder H.264 như trước — không chặn 4K theo heap/camera
+         * (camera preview size ≠ encode size; trước đây 4K vẫn live được).
          */
-        fun getSupportedQualities(): List<StreamQuality> {
+        fun getSupportedQualities(context: Context? = null): List<StreamQuality> {
             val supported = mutableListOf<StreamQuality>()
             try {
                 val codecList = android.media.MediaCodecList(android.media.MediaCodecList.ALL_CODECS)
@@ -55,7 +54,6 @@ enum class StreamQuality(val width: Int, val height: Int, val bitrate: Int, val 
                 if (encoder != null) {
                     val caps = encoder.getCapabilitiesForType("video/avc")
                     val videoCapabilities = caps.videoCapabilities
-
                     for (q in values()) {
                         if (videoCapabilities.isSizeSupported(q.width, q.height)) {
                             supported.add(q)
@@ -66,7 +64,6 @@ enum class StreamQuality(val width: Int, val height: Int, val bitrate: Int, val 
             } catch (e: Exception) {
                 android.util.Log.e("PB_VIDEO", "getSupportedQualities error: ${e.message}")
             }
-            // Fallback: nếu detect fail, ít nhất 720p luôn được
             if (supported.isEmpty()) supported.add(Q_720P)
             return supported
         }
@@ -327,7 +324,18 @@ class StreamManager(
         }
     }
 
-    private fun obtainOverlayBuffer(w: Int, h: Int): Bitmap {
+    /**
+     * Overlay vẽ tối đa 1080p rồi GL scale full màn — tránh OOM khi stream 2K/4K
+     * (2 buffer ARGB 4K ≈ 66MB → dễ crash thoát app).
+     */
+    private fun overlayDrawSize(q: StreamQuality): Pair<Int, Int> {
+        val maxH = 1080
+        if (q.height <= maxH) return q.width to q.height
+        val scale = maxH.toFloat() / q.height
+        return (q.width * scale).toInt().coerceAtLeast(1) to maxH
+    }
+
+    private fun obtainOverlayBuffer(w: Int, h: Int): Bitmap? {
         val idx = overlayBufferIdx
         overlayBufferIdx = 1 - overlayBufferIdx
         var bmp = overlayBuffers[idx]
@@ -335,7 +343,17 @@ class StreamManager(
             bmp?.let {
                 try { if (!it.isRecycled) it.recycle() } catch (_: Exception) {}
             }
-            bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            bmp = try {
+                Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            } catch (e: OutOfMemoryError) {
+                android.util.Log.e("PB_OVERLAY", "OOM create overlay ${w}x${h}: ${e.message}")
+                System.gc()
+                try {
+                    Bitmap.createBitmap(1280, 720, Bitmap.Config.ARGB_8888)
+                } catch (_: OutOfMemoryError) {
+                    null
+                }
+            }
             overlayBuffers[idx] = bmp
         }
         return bmp
@@ -355,8 +373,7 @@ class StreamManager(
         if (!force && !overlayDirty && !contentChanged && !needMarquee) return
 
         val q = actualQuality ?: selectedQuality
-        val w = q.width
-        val h = q.height
+        val (w, h) = overlayDrawSize(q)
 
         val stateKey = when {
             m != null && m.paused -> "paused"
@@ -370,14 +387,14 @@ class StreamManager(
 
         synchronized(overlayLock) {
             try {
-                val bmp = obtainOverlayBuffer(w, h)
+                val bmp = obtainOverlayBuffer(w, h) ?: return
                 val canvas = Canvas(bmp)
                 canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
                 if (m != null) {
-                    if (m.paused) ScoreboardOverlay.drawPaused(canvas, w, h, m)
-                    else ScoreboardOverlay.draw(canvas, w, h, m)
+                    if (m.paused) ScoreboardOverlay.drawPaused(canvas, bmp.width, bmp.height, m)
+                    else ScoreboardOverlay.draw(canvas, bmp.width, bmp.height, m)
                 } else {
-                    ScoreboardOverlay.drawLogosOnly(canvas, w, h)
+                    ScoreboardOverlay.drawLogosOnly(canvas, bmp.width, bmp.height)
                 }
                 // Ping-pong buffer — không copy bitmap mỗi frame
                 imageFilter?.setImage(bmp)
@@ -386,35 +403,49 @@ class StreamManager(
             } catch (e: Exception) {
                 android.util.Log.e("PB_OVERLAY", "refreshOverlay CRASH: ${e.message}")
                 overlayDirty = true
+            } catch (e: OutOfMemoryError) {
+                android.util.Log.e("PB_OVERLAY", "refreshOverlay OOM: ${e.message}")
+                overlayDirty = true
             }
         }
     }
 
-    fun startStream(rtmpUrl: String, streamKey: String) {
-        val camera = rtmpCamera ?: return
+    /** @return true nếu đã gọi startStream (có thể đã fallback xuống chất lượng thấp hơn). */
+    fun startStream(rtmpUrl: String, streamKey: String): Boolean {
+        val camera = rtmpCamera ?: return false
         val fullUrl = "$rtmpUrl/$streamKey"
         lastRtmpUrl = fullUrl
-        if (!camera.isStreaming) {
+        if (camera.isStreaming) return true
+        return try {
             val quality = resolveQuality(camera)
-            if (quality != null) {
-                actualQuality = quality
-                camera.startStream(fullUrl)
-                onStatusChange("🔴 Đang stream ${quality.label}...")
-                // Force setup filter with retries — GL context should be ready now
-                filterReady = false
-                setupFilter()
-                if (!filterReady) {
-                    // Retry aggressively: 100ms, 300ms, 500ms, 1000ms, 2000ms
-                    handler.postDelayed({ setupFilter(); refreshOverlay() }, 100)
-                    handler.postDelayed({ setupFilter(); refreshOverlay() }, 300)
-                    handler.postDelayed({ setupFilter(); refreshOverlay() }, 500)
-                    handler.postDelayed({ setupFilter(); refreshOverlay() }, 1000)
-                    handler.postDelayed({ setupFilter(); refreshOverlay() }, 2000)
-                }
-                startOverlayLoop()
-            } else {
+            if (quality == null) {
                 onStatusChange("❌ Không thể khởi tạo camera/audio ở bất kỳ chất lượng nào")
+                return false
             }
+            actualQuality = quality
+            camera.startStream(fullUrl)
+            onStatusChange("🔴 Đang stream ${quality.label}...")
+            filterReady = false
+            setupFilter()
+            if (!filterReady) {
+                handler.postDelayed({ setupFilter(); refreshOverlay() }, 100)
+                handler.postDelayed({ setupFilter(); refreshOverlay() }, 300)
+                handler.postDelayed({ setupFilter(); refreshOverlay() }, 500)
+                handler.postDelayed({ setupFilter(); refreshOverlay() }, 1000)
+                handler.postDelayed({ setupFilter(); refreshOverlay() }, 2000)
+            }
+            startOverlayLoop()
+            true
+        } catch (e: Exception) {
+            android.util.Log.e("PB_STREAM", "startStream failed: ${e.message}", e)
+            onStatusChange("❌ Lỗi start stream: ${e.message ?: "unknown"}")
+            try { if (camera.isStreaming) camera.stopStream() } catch (_: Exception) {}
+            false
+        } catch (e: OutOfMemoryError) {
+            android.util.Log.e("PB_STREAM", "startStream OOM — thử lại với 720p")
+            onStatusChange("❌ Máy thiếu RAM cho ${selectedQuality.label} — chọn 720p/1080p")
+            try { if (camera.isStreaming) camera.stopStream() } catch (_: Exception) {}
+            false
         }
     }
 
@@ -424,26 +455,40 @@ class StreamManager(
      */
     private fun resolveQuality(camera: RtmpCamera2): StreamQuality? {
         val qualities = StreamQuality.all()
-        val startIndex = qualities.indexOf(selectedQuality)
+        val startIndex = qualities.indexOf(selectedQuality).coerceAtLeast(0)
         for (i in startIndex until qualities.size) {
             val q = qualities[i]
-            if (camera.prepareVideo(q.width, q.height, q.fps, scaledBitrate(q.bitrate), 0) &&
-                camera.prepareAudio(192 * 1024, 44100, false)) {
-                if (q != selectedQuality) {
-                    onStatusChange("⚠️ ${selectedQuality.label} không hỗ trợ, dùng ${q.label}")
+            try {
+                val okVideo = camera.prepareVideo(q.width, q.height, q.fps, q.bitrate, 0)
+                val okAudio = okVideo && camera.prepareAudio(192 * 1024, 44100, false)
+                if (okVideo && okAudio) {
+                    if (q != selectedQuality) {
+                        onStatusChange("⚠️ ${selectedQuality.label} không hỗ trợ, dùng ${q.label}")
+                    }
+                    android.util.Log.i("PB_STREAM", "resolveQuality: selected=${selectedQuality.label} → actual=${q.label}")
+                    return q
                 }
-                return q
+                android.util.Log.w("PB_STREAM", "prepare failed for ${q.label} (video=$okVideo)")
+            } catch (e: Exception) {
+                android.util.Log.w("PB_STREAM", "prepare exception ${q.label}: ${e.message}")
             }
         }
         return null
     }
 
     private fun scaledBitrate(base: Int): Int {
+        // 4K/2K: không hạ bitrate theo nhiệt lúc prepare/cap nhẹ — tránh live bị "không ổn"
+        val q = actualQuality ?: selectedQuality
+        if (q == StreamQuality.Q_4K || q == StreamQuality.Q_2K) {
+            return base
+        }
         return (base * ThermalHelper.bitrateScale()).toInt().coerceAtLeast(1500 * 1024)
     }
 
     private fun applyThermalBitrateCap() {
         val q = actualQuality ?: return
+        // Giữ nguyên bitrate cao khi user chọn 4K/2K
+        if (q == StreamQuality.Q_4K || q == StreamQuality.Q_2K) return
         val camera = rtmpCamera ?: return
         if (!camera.isStreaming) return
         val target = scaledBitrate(q.bitrate)
@@ -603,19 +648,28 @@ class StreamManager(
         val q = actualQuality ?: return
         val targetBitrate = q.bitrate.toLong()
         val currentBitrate = rtmpCamera?.getBitrate()?.toLong() ?: targetBitrate
-        val minBitrate = (targetBitrate * 0.3).toLong().coerceAtLeast(1000L * 1024) // min 1Mbps
+        // 4K/2K: chỉ hạ khi thật sự yếu (min 50% target), tránh nhấp nháy bitrate
+        val isHighRes = q == StreamQuality.Q_4K || q == StreamQuality.Q_2K
+        val minBitrate = if (isHighRes) {
+            (targetBitrate * 0.5).toLong()
+        } else {
+            (targetBitrate * 0.3).toLong().coerceAtLeast(1000L * 1024)
+        }
+        val weakThreshold = if (isHighRes) 0.45 else 0.6
+        val weakNeedCount = if (isHighRes) LOW_BITRATE_THRESHOLD + 2 else LOW_BITRATE_THRESHOLD
 
-        if (bitrate < currentBitrate * 0.6) {
-            // Mạng yếu — giảm bitrate 30%
+        if (bitrate < currentBitrate * weakThreshold) {
             lowBitrateCount++
             highBitrateCount = 0
-            if (lowBitrateCount >= LOW_BITRATE_THRESHOLD) {
+            if (lowBitrateCount >= weakNeedCount) {
                 lowBitrateCount = 0
                 val newBitrate = (currentBitrate * 0.7).toLong().coerceAtLeast(minBitrate)
-                rtmpCamera?.setVideoBitrateOnFly(newBitrate.toInt())
-                val mbps = String.format("%.1f", newBitrate.toFloat() / 1024 / 1024)
-                android.util.Log.w("PB_STREAM", "⚠️ WEAK NETWORK: bitrate ${bitrate/1024}kbps < threshold, reducing to ${newBitrate/1024}kbps (${mbps}Mbps)")
-                onStatusChange("⚠️ Mạng yếu → ${mbps}Mbps")
+                if (newBitrate < currentBitrate) {
+                    rtmpCamera?.setVideoBitrateOnFly(newBitrate.toInt())
+                    val mbps = String.format("%.1f", newBitrate.toFloat() / 1024 / 1024)
+                    android.util.Log.w("PB_STREAM", "⚠️ WEAK NETWORK: bitrate ${bitrate/1024}kbps < threshold, reducing to ${newBitrate/1024}kbps (${mbps}Mbps)")
+                    onStatusChange("⚠️ Mạng yếu → ${mbps}Mbps")
+                }
             }
         } else if (bitrate > currentBitrate * 0.9 && currentBitrate < targetBitrate) {
             // Mạng ổn — tăng bitrate 20% (không vượt target)

@@ -68,7 +68,7 @@ fun VideoApp() {
     LaunchedEffect(Unit) {
         backCameras = StreamManager.getBackCameras(context)
         if (backCameras.isNotEmpty()) selectedCameraId = backCameras.first().id
-        supportedQualities = StreamQuality.getSupportedQualities()
+        supportedQualities = StreamQuality.getSupportedQualities(context)
         selectedQuality = StreamQuality.preferredDefault(supportedQualities)
     }
 

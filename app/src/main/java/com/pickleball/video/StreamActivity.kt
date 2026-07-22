@@ -19,8 +19,10 @@ import vn.vdpr.video.data.FirebaseMatchListener
 import vn.vdpr.video.stream.StreamManager
 import vn.vdpr.video.stream.StreamKeepAliveService
 import vn.vdpr.video.stream.StreamQuality
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.core.content.ContextCompat
 import android.Manifest
 import android.content.pm.PackageManager
@@ -208,23 +210,26 @@ class StreamActivity : AppCompatActivity() {
                             streamEndedConfirmCount = 0
                         }
 
-                        // If rtmp_url + stream_key available and not currently streaming → start
                         if (!config.rtmp_url.isNullOrBlank() && !config.stream_key.isNullOrBlank() && !isStreaming) {
                             isStreaming = true
-                            runOnUiThread {
+                            val started = withContext(Dispatchers.Main) {
                                 startKeepAlive()
-                                streamManager?.startStream(config.rtmp_url, config.stream_key)
+                                streamManager?.startStream(config.rtmp_url, config.stream_key) == true
                             }
-                            reportBatteryNow()
-                            // Report stream confirmed to backend
-                            try {
-                                api.streamConfirmed(StreamConfirmedRequest(
-                                    match_id = matchId,
-                                    match_type = matchType,
-                                    tournament_id = tournamentId,
-                                    court_name = courtName,
-                                ))
-                            } catch (_: Exception) {}
+                            if (!started) {
+                                isStreaming = false
+                                withContext(Dispatchers.Main) { stopKeepAlive() }
+                            } else {
+                                reportBatteryNow()
+                                try {
+                                    api.streamConfirmed(StreamConfirmedRequest(
+                                        match_id = matchId,
+                                        match_type = matchType,
+                                        tournament_id = tournamentId,
+                                        court_name = courtName,
+                                    ))
+                                } catch (_: Exception) {}
+                            }
                         } else if (config.rtmp_url.isNullOrBlank() || config.stream_key.isNullOrBlank()) {
                             // Reset broadcast: key bị xóa → cho phép start lại khi có key mới
                             if (isStreaming) {
