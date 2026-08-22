@@ -34,7 +34,11 @@ data class TournamentListItem(
 )
 
 data class TournamentListResponse(
-    val data: List<TournamentListItem>,
+    val data: List<TournamentListItem> = emptyList(),
+    val current_page: Int = 1,
+    val last_page: Int = 1,
+    val per_page: Int = 20,
+    val total: Int = 0,
 )
 
 data class MatchStreamConfigResponse(
@@ -90,7 +94,12 @@ data class OverlayLogo(
 
 interface ApiService {
     @GET("public/tournaments")
-    suspend fun getTournaments(@Query("active") active: Int = 1): TournamentListResponse
+    suspend fun getTournaments(
+        @Query("active") active: Int? = 1,
+        @Query("page") page: Int = 1,
+        @Query("per_page") perPage: Int = 20,
+        @Query("q") query: String? = null,
+    ): TournamentListResponse
 
     @GET("public/tournaments/{id}/stream-config")
     suspend fun getStreamConfig(@Path("id") tournamentId: Int): StreamConfigResponse

@@ -247,6 +247,8 @@ class StreamManager(
             // Có data mới → hiện ngay
             if (currentMatch == null) {
                 android.util.Log.i("PB_OVERLAY", "▶ Scoreboard ON: ${match.left.teamName} vs ${match.right.teamName} [${match.scoreLeft}-${match.scoreRight}] paused=${match.paused}")
+            } else if (currentMatch?.scoreLeft != match.scoreLeft || currentMatch?.scoreRight != match.scoreRight) {
+                android.util.Log.d("PB_OVERLAY", "Score update: ${currentMatch?.scoreLeft}-${currentMatch?.scoreRight} → ${match.scoreLeft}-${match.scoreRight}")
             }
             lastMatchReceivedAt = System.currentTimeMillis()
             currentMatch = match
@@ -264,7 +266,13 @@ class StreamManager(
             currentMatch = null
             overlayDirty = true
         }
-        refreshOverlay()
+        // Gộp về main handler — tránh race với overlay loop khi trọng tài ấn điểm liên tục
+        handler.removeCallbacks(matchOverlayRefreshRunnable)
+        handler.post(matchOverlayRefreshRunnable)
+    }
+
+    private val matchOverlayRefreshRunnable = Runnable {
+        refreshOverlay(force = true)
     }
 
     /** Gọi khi switch sang trận mới — clear ngay không debounce */
@@ -295,7 +303,10 @@ class StreamManager(
             imageFilter?.setScale(100f, 100f) // full screen overlay
             imageFilter?.setPosition(TranslateTo.CENTER)
             filterReady = true
-            android.util.Log.i("PB_VIDEO", "setupFilter SUCCESS — overlay active")
+            // Filter mới trống — phải setImage lại dù điểm/tên không đổi (reconnect RTMP)
+            overlayDirty = true
+            lastContentKey = ""
+            android.util.Log.i("PB_VIDEO", "setupFilter SUCCESS — overlay active (force redraw)")
         } catch (e: Exception) {
             android.util.Log.w("PB_VIDEO", "setupFilter failed (will retry): ${e.message}")
             // Reset so next attempt creates fresh filter
@@ -303,8 +314,10 @@ class StreamManager(
         }
     }
 
-    private var overlayBuffers = arrayOfNulls<Bitmap>(2)
+    // 3 buffer — không bao giờ CLEAR/vẽ đè bitmap vừa đưa vào setImage (GL còn đọc → overlay trắng khi ấn điểm)
+    private var overlayBuffers = arrayOfNulls<Bitmap>(3)
     private var overlayBufferIdx = 0
+    private var lastUploadedBufferIdx = -1
     private val overlayLock = Object()
     private var lastOverlayState = "" // track state changes for logging
     private var lastContentKey = ""
@@ -336,8 +349,14 @@ class StreamManager(
     }
 
     private fun obtainOverlayBuffer(w: Int, h: Int): Bitmap? {
+        // Chọn buffer khác với bitmap GL đang giữ
+        var attempts = 0
+        do {
+            overlayBufferIdx = (overlayBufferIdx + 1) % overlayBuffers.size
+            attempts++
+        } while (overlayBufferIdx == lastUploadedBufferIdx && attempts < overlayBuffers.size)
+
         val idx = overlayBufferIdx
-        overlayBufferIdx = 1 - overlayBufferIdx
         var bmp = overlayBuffers[idx]
         if (bmp == null || bmp.isRecycled || bmp.width != w || bmp.height != h) {
             bmp?.let {
@@ -396,12 +415,13 @@ class StreamManager(
                 } else {
                     ScoreboardOverlay.drawLogosOnly(canvas, bmp.width, bmp.height)
                 }
-                // Ping-pong buffer — không copy bitmap mỗi frame
+                // Ping-pong/triple — không copy bitmap mỗi frame; không đụng buffer vừa upload
                 imageFilter?.setImage(bmp)
+                lastUploadedBufferIdx = overlayBufferIdx
                 lastContentKey = contentKey
                 overlayDirty = false
             } catch (e: Exception) {
-                android.util.Log.e("PB_OVERLAY", "refreshOverlay CRASH: ${e.message}")
+                android.util.Log.e("PB_OVERLAY", "refreshOverlay CRASH: ${e.message}", e)
                 overlayDirty = true
             } catch (e: OutOfMemoryError) {
                 android.util.Log.e("PB_OVERLAY", "refreshOverlay OOM: ${e.message}")
@@ -427,12 +447,13 @@ class StreamManager(
             onStatusChange("🔴 Đang stream ${quality.label}...")
             filterReady = false
             setupFilter()
+            refreshOverlay(force = true)
             if (!filterReady) {
-                handler.postDelayed({ setupFilter(); refreshOverlay() }, 100)
-                handler.postDelayed({ setupFilter(); refreshOverlay() }, 300)
-                handler.postDelayed({ setupFilter(); refreshOverlay() }, 500)
-                handler.postDelayed({ setupFilter(); refreshOverlay() }, 1000)
-                handler.postDelayed({ setupFilter(); refreshOverlay() }, 2000)
+                handler.postDelayed({ setupFilter(); refreshOverlay(force = true) }, 100)
+                handler.postDelayed({ setupFilter(); refreshOverlay(force = true) }, 300)
+                handler.postDelayed({ setupFilter(); refreshOverlay(force = true) }, 500)
+                handler.postDelayed({ setupFilter(); refreshOverlay(force = true) }, 1000)
+                handler.postDelayed({ setupFilter(); refreshOverlay(force = true) }, 2000)
             }
             startOverlayLoop()
             true
@@ -534,7 +555,7 @@ class StreamManager(
         // Setup filter after preview starts (GL context ready)
         handler.postDelayed({
             setupFilter()
-            refreshOverlay()
+            refreshOverlay(force = true)
             if (overlayRunnable == null) startOverlayLoop()
         }, 1000)
     }
@@ -577,7 +598,7 @@ class StreamManager(
                     android.util.Log.i("PB_STREAM", "Health check: frames=$overlayFrameCount, mem=${usedMB}/${maxMB}MB, streaming=${rtmpCamera?.isStreaming}, bitrate=${rtmpCamera?.getBitrate()}, filterReady=$filterReady, hasMatch=${currentMatch != null}")
                 }
                 // Marquee nhanh hơn; không marquee chậm hơn; máy nóng chậm thêm
-                val baseDelay = if (ScoreboardOverlay.hasMarquee()) 120L else 400L
+                val baseDelay = if (ScoreboardOverlay.hasMarquee()) 100L else 400L
                 val delayMs = baseDelay * ThermalHelper.overlayDelayMultiplier()
                 handler.postDelayed(this, delayMs)
             }
@@ -602,12 +623,14 @@ class StreamManager(
                 overlayBuffers[i] = null
             }
         }
+        lastUploadedBufferIdx = -1
         ScoreboardOverlay.clearLogoScaleCache()
         ThermalHelper.stop(context)
         filterReady = false
         imageFilter = null
         lastContentKey = ""
         overlayDirty = true
+        handler.removeCallbacks(matchOverlayRefreshRunnable)
     }
 
     override fun onConnectionStartedRtmp(rtmpUrl: String) {
@@ -624,7 +647,8 @@ class StreamManager(
         filterReady = false
         handler.post {
             setupFilter()
-            refreshOverlay()
+            // Bắt buộc vẽ lại — nếu không, skip dirty-check để trống đến khi đổi điểm
+            refreshOverlay(force = true)
         }
         // Ensure overlay loop is running after reconnect
         if (overlayRunnable == null) {

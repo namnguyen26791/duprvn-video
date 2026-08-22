@@ -10,6 +10,7 @@ import java.io.FileOutputStream
 /**
  * Persist overlay bitmaps to disk cache.
  * Survives process kill — reload on next StreamActivity start.
+ * Gắn với danh sách tournament id đã chọn để tránh nhầm logo giải khác.
  */
 object OverlayCache {
 
@@ -22,47 +23,64 @@ object OverlayCache {
         return dir
     }
 
-    /** Save all current overlay bitmaps to disk */
-    fun save(context: Context) {
+    /** Save all current overlay bitmaps to disk (xóa cache cũ trước). */
+    fun save(context: Context, tournamentIds: Set<Int> = emptySet()) {
+        clear(context)
         val dir = cacheDir(context)
         try {
-            // Top-right logos
             ScoreboardOverlay.topRightLogos.forEachIndexed { i, bmp ->
                 saveBitmap(bmp, File(dir, "top_right_$i.png"))
             }
-            // Bottom-right logos
             ScoreboardOverlay.bottomRightLogos.forEachIndexed { i, bmp ->
                 saveBitmap(bmp, File(dir, "bottom_right_$i.png"))
             }
-            // Pause image
             ScoreboardOverlay.pauseImage?.let { saveBitmap(it, File(dir, "pause.png")) }
-            // Marquee texts
+
             val marqueeFile = File(dir, "marquee.txt")
             marqueeFile.writeText(ScoreboardOverlay.marqueeTexts.joinToString("\n"))
-            // Metadata: counts
-            val meta = File(dir, "meta.txt")
-            meta.writeText("${ScoreboardOverlay.topRightLogos.size}\n${ScoreboardOverlay.bottomRightLogos.size}")
 
-            Log.d(TAG, "Saved overlay cache: top=${ScoreboardOverlay.topRightLogos.size}, bottom=${ScoreboardOverlay.bottomRightLogos.size}")
+            // meta: tids:<ids> | topCount | bottomCount
+            val tids = tournamentIds.sorted().joinToString(",")
+            File(dir, "meta.txt").writeText(
+                "tids:$tids\n${ScoreboardOverlay.topRightLogos.size}\n${ScoreboardOverlay.bottomRightLogos.size}"
+            )
+
+            Log.d(TAG, "Saved overlay cache: tids=$tids top=${ScoreboardOverlay.topRightLogos.size} bottom=${ScoreboardOverlay.bottomRightLogos.size}")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to save overlay cache: ${e.message}")
         }
     }
 
-    /** Load overlay bitmaps from disk into ScoreboardOverlay static fields */
-    fun load(context: Context): Boolean {
+    /**
+     * Load overlay nếu cache khớp đúng set tournament đã chọn.
+     * @return false nếu không có cache / lệch giải / lỗi
+     */
+    fun load(context: Context, expectedTournamentIds: Set<Int>): Boolean {
         val dir = cacheDir(context)
         val meta = File(dir, "meta.txt")
         if (!meta.exists()) return false
 
         try {
             val lines = meta.readText().split("\n")
-            val topCount = lines.getOrNull(0)?.toIntOrNull() ?: 0
-            val bottomCount = lines.getOrNull(1)?.toIntOrNull() ?: 0
+            val tidLine = lines.getOrNull(0)?.trim().orEmpty()
+            if (!tidLine.startsWith("tids:")) {
+                Log.w(TAG, "Legacy overlay cache without tids — clearing")
+                clear(context)
+                return false
+            }
+            val cachedTids = tidLine.removePrefix("tids:")
+                .split(",")
+                .mapNotNull { it.trim().toIntOrNull() }
+                .toSet()
 
-            if (topCount == 0 && bottomCount == 0) return false
+            if (expectedTournamentIds.isNotEmpty() && cachedTids != expectedTournamentIds) {
+                Log.w(TAG, "Overlay cache tids mismatch: cached=$cachedTids expected=$expectedTournamentIds — skip")
+                return false
+            }
 
-            // Load top-right logos
+            val topCount = lines.getOrNull(1)?.toIntOrNull() ?: 0
+            val bottomCount = lines.getOrNull(2)?.toIntOrNull() ?: 0
+
             val topList = mutableListOf<Bitmap>()
             for (i in 0 until topCount) {
                 val f = File(dir, "top_right_$i.png")
@@ -72,12 +90,11 @@ object OverlayCache {
                     }
                 }
             }
+            ScoreboardOverlay.topRightLogos = topList
             if (topList.isNotEmpty()) {
-                ScoreboardOverlay.topRightLogos = topList
                 ScoreboardOverlay.pickbaseLogo = topList.first()
             }
 
-            // Load bottom-right logos
             val bottomList = mutableListOf<Bitmap>()
             for (i in 0 until bottomCount) {
                 val f = File(dir, "bottom_right_$i.png")
@@ -87,28 +104,25 @@ object OverlayCache {
                     }
                 }
             }
+            ScoreboardOverlay.bottomRightLogos = bottomList
             if (bottomList.isNotEmpty()) {
-                ScoreboardOverlay.bottomRightLogos = bottomList
                 ScoreboardOverlay.tournamentLogo = bottomList.first()
             }
 
-            // Load pause image
             val pauseFile = File(dir, "pause.png")
-            if (pauseFile.exists()) {
-                ScoreboardOverlay.pauseImage = BitmapFactory.decodeFile(pauseFile.absolutePath)?.let {
+            ScoreboardOverlay.pauseImage = if (pauseFile.exists()) {
+                BitmapFactory.decodeFile(pauseFile.absolutePath)?.let {
                     BitmapUtils.clampToMaxEdge(it, BitmapUtils.MAX_PAUSE_EDGE)
                 }
-            }
+            } else null
 
-            // Load marquee texts
             val marqueeFile = File(dir, "marquee.txt")
-            if (marqueeFile.exists()) {
-                val texts = marqueeFile.readText().split("\n").filter { it.isNotBlank() }
-                if (texts.isNotEmpty()) ScoreboardOverlay.marqueeTexts = texts
-            }
+            ScoreboardOverlay.marqueeTexts = if (marqueeFile.exists()) {
+                marqueeFile.readText().split("\n").filter { it.isNotBlank() }
+            } else emptyList()
 
-            Log.d(TAG, "Loaded overlay cache: top=${topList.size}, bottom=${bottomList.size}")
-            return topList.isNotEmpty() || bottomList.isNotEmpty()
+            Log.d(TAG, "Loaded overlay cache: tids=$cachedTids top=${topList.size} bottom=${bottomList.size}")
+            return true
         } catch (e: Exception) {
             Log.w(TAG, "Failed to load overlay cache: ${e.message}")
             return false

@@ -12,8 +12,8 @@ android {
         applicationId = "vn.vdpr.video"
         minSdk = 26
         targetSdk = 35
-        versionCode = 15
-        versionName = "1.1.6"
+        versionCode = 19
+        versionName = "1.1.10"
 
         // Firebase + API config from build
         buildConfigField("String", "API_BASE", "\"https://backend.vdpr.vn/api\"")
@@ -67,6 +67,7 @@ dependencies {
     implementation("androidx.compose.animation:animation")
     implementation("androidx.activity:activity-compose:1.9.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.0")
 
     // Android View (for SurfaceView used by RootEncoder)
     implementation("androidx.appcompat:appcompat:1.6.1")

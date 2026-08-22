@@ -351,7 +351,7 @@ object ScoreboardOverlay {
         val textY = barY + barH * 0.7f
         canvas.drawText(fullText + separator + fullText, -marqueeOffset, textY, textP)
 
-        marqueeOffset += 3f * s
+        marqueeOffset += 4.5f * s
         if (marqueeOffset >= textWidth) marqueeOffset = 0f
     }
 

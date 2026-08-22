@@ -74,10 +74,16 @@ class StreamActivity : AppCompatActivity() {
         System.setProperty("java.net.preferIPv4Stack", "true")
 
         // Load overlay from disk cache if static fields are empty (process was killed)
+        // Chỉ load khi cache khớp đúng set giải đang chọn — tránh logo giải khác
         if (vn.vdpr.video.overlay.ScoreboardOverlay.topRightLogos.isEmpty() &&
             vn.vdpr.video.overlay.ScoreboardOverlay.bottomRightLogos.isEmpty()) {
-            val loaded = vn.vdpr.video.overlay.OverlayCache.load(this)
-            android.util.Log.i("PB_OVERLAY", "Cache load: $loaded | topLogos=${vn.vdpr.video.overlay.ScoreboardOverlay.topRightLogos.size} bottomLogos=${vn.vdpr.video.overlay.ScoreboardOverlay.bottomRightLogos.size}")
+            val prefs = getSharedPreferences("video_app", MODE_PRIVATE)
+            val expectedTids = prefs.getStringSet("tids", emptySet())
+                ?.mapNotNull { it.toIntOrNull() }
+                ?.toSet()
+                ?: emptySet()
+            val loaded = vn.vdpr.video.overlay.OverlayCache.load(this, expectedTids)
+            android.util.Log.i("PB_OVERLAY", "Cache load: $loaded tids=$expectedTids | topLogos=${vn.vdpr.video.overlay.ScoreboardOverlay.topRightLogos.size} bottomLogos=${vn.vdpr.video.overlay.ScoreboardOverlay.bottomRightLogos.size}")
         } else {
             android.util.Log.i("PB_OVERLAY", "Overlay already in memory: topLogos=${vn.vdpr.video.overlay.ScoreboardOverlay.topRightLogos.size} bottomLogos=${vn.vdpr.video.overlay.ScoreboardOverlay.bottomRightLogos.size}")
         }
@@ -158,6 +164,8 @@ class StreamActivity : AppCompatActivity() {
 
     private var streamEndedConfirmCount = 0
     private var keepAliveStarted = false
+    private var lastRtmpUrl: String? = null
+    private var lastStreamKey: String? = null
 
     private val notifPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -172,15 +180,24 @@ class StreamActivity : AppCompatActivity() {
 
     private fun startKeepAlive() {
         if (keepAliveStarted) return
-        keepAliveStarted = true
-        ensureNotificationPermission()
-        StreamKeepAliveService.start(this, courtName, matchId)
+        try {
+            keepAliveStarted = true
+            ensureNotificationPermission()
+            StreamKeepAliveService.start(this, courtName, matchId)
+        } catch (e: Exception) {
+            keepAliveStarted = false
+            android.util.Log.e("PB_VIDEO", "startKeepAlive failed: ${e.message}", e)
+        }
     }
 
     private fun stopKeepAlive() {
         if (!keepAliveStarted) return
         keepAliveStarted = false
-        StreamKeepAliveService.stop(this)
+        try {
+            StreamKeepAliveService.stop(this)
+        } catch (e: Exception) {
+            android.util.Log.w("PB_VIDEO", "stopKeepAlive: ${e.message}")
+        }
     }
 
     private fun startConfigCheck() {
@@ -202,6 +219,7 @@ class StreamActivity : AppCompatActivity() {
                                 runOnUiThread {
                                     stopKeepAlive()
                                     streamManager?.release()
+                                    setResult(RESULT_OK)
                                     finish()
                                 }
                                 return@launch
@@ -210,30 +228,47 @@ class StreamActivity : AppCompatActivity() {
                             streamEndedConfirmCount = 0
                         }
 
-                        if (!config.rtmp_url.isNullOrBlank() && !config.stream_key.isNullOrBlank() && !isStreaming) {
-                            isStreaming = true
-                            val started = withContext(Dispatchers.Main) {
-                                startKeepAlive()
-                                streamManager?.startStream(config.rtmp_url, config.stream_key) == true
-                            }
-                            if (!started) {
+                        val rtmp = config.rtmp_url
+                        val key = config.stream_key
+                        if (!rtmp.isNullOrBlank() && !key.isNullOrBlank()) {
+                            val urlChanged = isStreaming && (rtmp != lastRtmpUrl || key != lastStreamKey)
+                            if (urlChanged) {
+                                android.util.Log.w("PB_VIDEO", "configCheck: RTMP/key changed → restart stream")
                                 isStreaming = false
-                                withContext(Dispatchers.Main) { stopKeepAlive() }
-                            } else {
-                                reportBatteryNow()
-                                try {
-                                    api.streamConfirmed(StreamConfirmedRequest(
-                                        match_id = matchId,
-                                        match_type = matchType,
-                                        tournament_id = tournamentId,
-                                        court_name = courtName,
-                                    ))
-                                } catch (_: Exception) {}
+                                withContext(Dispatchers.Main) {
+                                    stopKeepAlive()
+                                    streamManager?.stopStream()
+                                }
                             }
-                        } else if (config.rtmp_url.isNullOrBlank() || config.stream_key.isNullOrBlank()) {
+                            if (!isStreaming) {
+                                isStreaming = true
+                                lastRtmpUrl = rtmp
+                                lastStreamKey = key
+                                val started = withContext(Dispatchers.Main) {
+                                    startKeepAlive()
+                                    streamManager?.startStream(rtmp, key) == true
+                                }
+                                if (!started) {
+                                    isStreaming = false
+                                    withContext(Dispatchers.Main) { stopKeepAlive() }
+                                } else {
+                                    reportBatteryNow()
+                                    try {
+                                        api.streamConfirmed(StreamConfirmedRequest(
+                                            match_id = matchId,
+                                            match_type = matchType,
+                                            tournament_id = tournamentId,
+                                            court_name = courtName,
+                                        ))
+                                    } catch (_: Exception) {}
+                                }
+                            }
+                        } else {
                             // Reset broadcast: key bị xóa → cho phép start lại khi có key mới
                             if (isStreaming) {
                                 isStreaming = false
+                                lastRtmpUrl = null
+                                lastStreamKey = null
                                 runOnUiThread {
                                     stopKeepAlive()
                                     streamManager?.stopStream()
@@ -304,6 +339,8 @@ class StreamActivity : AppCompatActivity() {
             streamManager?.release()
             isStreaming = false
             streamEndedConfirmCount = 0
+            lastRtmpUrl = null
+            lastStreamKey = null
             // Restart with new intent
             setIntent(intent)
             recreate()
