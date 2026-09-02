@@ -124,6 +124,7 @@ class StreamActivity : AppCompatActivity() {
         }
         streamManager?.selectedQuality = quality
         streamManager?.init(courtName, cameraId)
+        streamManager?.restoreOverlayFlags(expectedTids)
         // force=true: luôn tải lại logo từ API theo giải đang chọn (tránh dính trên+dưới giải cũ)
         streamManager?.loadOverlayConfig(apiBase, tournamentId, expectedTids, force = true)
 
@@ -203,13 +204,17 @@ class StreamActivity : AppCompatActivity() {
                         val config = api.getMatchStreamConfig(matchId, matchType)
                         applyStreamMeta(config.tournament_id, config.court)
 
-                        // Tạo lại broadcast / stop-live chỉ set stream_ended_at (status vẫn playing).
-                        // Trước Jul 4 chỉ cần stream_ended_at → đóng activity → Live mở lại bình thường.
-                        // Sau khi thêm && status=="done", recreate không đóng được → không auto live.
-                        if (!config.stream_ended_at.isNullOrBlank()) {
+                        // Hết live: stream_ended_at có giá trị, HOẶC reset trận (mất stream_started_at / RTMP)
+                        val stillLive = !config.stream_started_at.isNullOrBlank() &&
+                            config.stream_ended_at.isNullOrBlank()
+                        val hasRtmp = !config.rtmp_url.isNullOrBlank() && !config.stream_key.isNullOrBlank()
+                        if (!stillLive || (!hasRtmp && isStreaming)) {
                             streamEndedConfirmCount++
                             if (streamEndedConfirmCount >= 2) {
-                                android.util.Log.w("PB_VIDEO", "configCheck: stream_ended_at='${config.stream_ended_at}' → finishing")
+                                android.util.Log.w(
+                                    "PB_VIDEO",
+                                    "configCheck: end live stillLive=$stillLive hasRtmp=$hasRtmp ended='${config.stream_ended_at}' → finishing",
+                                )
                                 runOnUiThread {
                                     stopKeepAlive()
                                     streamManager?.release()
@@ -224,7 +229,7 @@ class StreamActivity : AppCompatActivity() {
 
                         val rtmp = config.rtmp_url
                         val key = config.stream_key
-                        if (!rtmp.isNullOrBlank() && !key.isNullOrBlank()) {
+                        if (!rtmp.isNullOrBlank() && !key.isNullOrBlank() && stillLive) {
                             val urlChanged = isStreaming && (rtmp != lastRtmpUrl || key != lastStreamKey)
                             if (urlChanged) {
                                 android.util.Log.w("PB_VIDEO", "configCheck: RTMP/key changed → restart stream")
@@ -257,8 +262,8 @@ class StreamActivity : AppCompatActivity() {
                                     } catch (_: Exception) {}
                                 }
                             }
-                        } else {
-                            // Reset broadcast: key bị xóa → cho phép start lại khi có key mới
+                        } else if (!hasRtmp) {
+                            // Reset broadcast / chưa có key → chờ cấu hình mới
                             if (isStreaming) {
                                 isStreaming = false
                                 lastRtmpUrl = null
@@ -325,10 +330,10 @@ class StreamActivity : AppCompatActivity() {
 
         android.util.Log.w(
             "PB_OVERLAY",
-            "Overlay stale or missing — reload (loaded=$loaded expected=$expectedTids streamTid=$streamTournamentId)",
+            "Overlay stale or missing — reload (loaded=$loaded expected=$expectedTids streamTid=$streamTournamentId hasLogos=${vn.vdpr.video.overlay.ScoreboardOverlay.hasCornerLogos()})",
         )
-        vn.vdpr.video.overlay.ScoreboardOverlay.clearAll()
 
+        // Thử cache trước — không clearAll trước (tránh xóa logo VideoApp đã load nếu cache miss)
         if (expectedTids.isNotEmpty()) {
             val fromCache = vn.vdpr.video.overlay.OverlayCache.load(this, expectedTids)
             if (fromCache && vn.vdpr.video.overlay.ScoreboardOverlay.hasCornerLogos()) {
@@ -336,7 +341,7 @@ class StreamActivity : AppCompatActivity() {
                 return
             }
         }
-        // API load do StreamManager.loadOverlayConfig (sau init)
+        // Giữ logo đang có trong RAM; StreamManager.loadOverlayConfig sẽ swap khi API có data
     }
 
     override fun onDestroy() {

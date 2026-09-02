@@ -23,7 +23,13 @@ data class MatchState(
     val tournamentName: String? = null,
     val roundName: String? = null,
     val paused: Boolean = false,
+    /** timeout | end | switch — lý do trọng tài tạm dừng. */
+    val pauseReason: String = "",
     val status: String = "",
+    /** Điểm thắng theo luật giải (0 = chưa biết → app video mặc định 11). */
+    val winScore: Int = 0,
+    /** Trần điểm tối đa (0 = không trần). Thắng khi chạm max và hơn đối thủ. */
+    val maxScore: Int = 0,
 )
 
 data class StreamConfig(

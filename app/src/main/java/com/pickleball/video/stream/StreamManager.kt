@@ -12,8 +12,10 @@ import com.pedro.rtmp.utils.ConnectCheckerRtmp
 import com.pedro.rtplibrary.rtmp.RtmpCamera2
 import com.pedro.rtplibrary.view.OpenGlView
 import vn.vdpr.video.R
+import vn.vdpr.video.commentary.CommentaryEngine
 import vn.vdpr.video.data.MatchState
 import vn.vdpr.video.overlay.BitmapUtils
+import vn.vdpr.video.overlay.OverlayCache
 import vn.vdpr.video.overlay.ScoreboardOverlay
 
 data class CameraInfo(val id: String, val label: String, val focalLength: Float)
@@ -88,6 +90,7 @@ class StreamManager(
     private var filterReady = false
     var selectedCameraId: String = "0"; private set
     private var lastRtmpUrl: String? = null
+    private val commentary = CommentaryEngine(context)
 
     // Adaptive bitrate — giảm chất lượng khi mạng yếu, tăng lại khi ổn, min 720p
     private var lowBitrateCount = 0
@@ -170,16 +173,58 @@ class StreamManager(
         rtmpCamera = RtmpCamera2(openGlView, this)
         ThermalHelper.start(context)
         loadPickbaseLogo()
+        // Flags TTS sẽ restore sau init với đúng tids (StreamActivity.restoreOverlayFlags)
         android.util.Log.i("PB_OVERLAY", "StreamManager.init: court=$courtName camera=$cameraId quality=${selectedQuality.label} topLogos=${ScoreboardOverlay.topRightLogos.size} bottomLogos=${ScoreboardOverlay.bottomRightLogos.size} pauseImg=${ScoreboardOverlay.pauseImage != null} marquee=${ScoreboardOverlay.marqueeTexts.size}")
     }
 
-    /** Logo mặc định từ res/drawable/logo.png — chỉ khi chưa có overlay giải */
+    /** Áp flags đã lưu (thoát app / process kill) — không chờ API. */
+    fun restoreOverlayFlags(expectedTids: Set<Int> = emptySet()) {
+        val flags = OverlayCache.loadFlags(context, expectedTids)
+        ScoreboardOverlay.introEnabled = flags.introScorebug
+        commentary.density = when (flags.commentaryDensity.lowercase()) {
+            "low" -> CommentaryEngine.Density.LOW
+            "high" -> CommentaryEngine.Density.HIGH
+            else -> CommentaryEngine.Density.MEDIUM
+        }
+        commentary.applyEnabled(flags.autoCommentary)
+        android.util.Log.i(
+            "PB_OVERLAY",
+            "restoreOverlayFlags: commentary=${flags.autoCommentary} intro=${flags.introScorebug} density=${flags.commentaryDensity}",
+        )
+    }
+
+    /** Logo brand trên bảng tỉ số / scorebug — luôn từ res/drawable/logo_overlay.png */
     private fun loadPickbaseLogo() {
-        if (ScoreboardOverlay.hasCornerLogos()) return
+        reloadBrandLogo()
+    }
+
+    /** Ép nạp logo_overlay (sau clearAll / swap API / init). */
+    private fun reloadBrandLogo() {
         try {
-            ScoreboardOverlay.pickbaseLogo = BitmapFactory.decodeResource(context.resources, R.drawable.logo)
+            val decoded = BitmapFactory.decodeResource(context.resources, R.drawable.logo_overlay)
+            if (decoded != null) {
+                val old = ScoreboardOverlay.pickbaseLogo
+                ScoreboardOverlay.pickbaseLogo = decoded
+                if (old != null && !old.isRecycled &&
+                    old !== decoded &&
+                    ScoreboardOverlay.topRightLogos.none { it === old } &&
+                    ScoreboardOverlay.bottomRightLogos.none { it === old } &&
+                    ScoreboardOverlay.tournamentLogo !== old &&
+                    ScoreboardOverlay.pauseImage !== old
+                ) {
+                    try { old.recycle() } catch (_: Exception) {}
+                }
+                android.util.Log.i("PB_VIDEO", "Brand logo_overlay.png loaded for scoreboard/scorebug")
+                return
+            }
         } catch (e: Exception) {
-            android.util.Log.w("PB_VIDEO", "Failed to load logo: ${e.message}")
+            android.util.Log.w("PB_VIDEO", "reloadBrandLogo logo_overlay: ${e.message}")
+        }
+        try {
+            ScoreboardOverlay.pickbaseLogo =
+                BitmapFactory.decodeResource(context.resources, R.drawable.logo)
+        } catch (e: Exception) {
+            android.util.Log.w("PB_VIDEO", "reloadBrandLogo fallback logo: ${e.message}")
         }
     }
 
@@ -218,7 +263,6 @@ class StreamManager(
 
     private fun loadOverlayFromApi(apiBase: String, tournamentIds: List<Int>) {
         val api = vn.vdpr.video.data.ApiService.create(apiBase)
-        ScoreboardOverlay.clearAll()
 
         val loadedTop = mutableListOf<Bitmap>()
         val loadedBottom = mutableListOf<Bitmap>()
@@ -226,10 +270,29 @@ class StreamManager(
         var mergedPause: Bitmap? = null
         val seenTopUrls = mutableSetOf<String>()
         val seenBottomUrls = mutableSetOf<String>()
+        var autoCommentary = false
+        var introScorebug = false
+        var density = CommentaryEngine.Density.MEDIUM
+        var gotAnyConfig = false
 
         for (tid in tournamentIds) {
             try {
                 val config = kotlinx.coroutines.runBlocking { api.getOverlayConfig(tid) }
+                gotAnyConfig = true
+
+                // Flag từ giải đầu tiên (hoặc OR: bật nếu bất kỳ giải nào bật)
+                if (tid == tournamentIds.first()) {
+                    autoCommentary = config.auto_commentary
+                    introScorebug = config.intro_scorebug
+                    density = when (config.commentary_density.lowercase()) {
+                        "low" -> CommentaryEngine.Density.LOW
+                        "high" -> CommentaryEngine.Density.HIGH
+                        else -> CommentaryEngine.Density.MEDIUM
+                    }
+                } else {
+                    autoCommentary = autoCommentary || config.auto_commentary
+                    introScorebug = introScorebug || config.intro_scorebug
+                }
 
                 for (logo in config.logos.filter { it.position == "top_right" }) {
                     if (!seenTopUrls.add(logo.url)) continue
@@ -252,20 +315,75 @@ class StreamManager(
             }
         }
 
-        ScoreboardOverlay.topRightLogos = loadedTop
-        ScoreboardOverlay.bottomRightLogos = loadedBottom
-        ScoreboardOverlay.marqueeTexts = mergedMarquee
-        ScoreboardOverlay.pauseImage = mergedPause
-        if (loadedTop.isNotEmpty()) ScoreboardOverlay.pickbaseLogo = loadedTop.first()
-        if (loadedBottom.isNotEmpty()) ScoreboardOverlay.tournamentLogo = loadedBottom.first()
-        ScoreboardOverlay.loadedTournamentIds = tournamentIds.toSet()
-
-        android.util.Log.d(
-            "PB_VIDEO",
-            "Overlay loaded from API tids=$tournamentIds top=${loadedTop.size} bottom=${loadedBottom.size} marquee=${mergedMarquee.size}",
-        )
+        // Swap trên main + overlayLock — tránh recycle logo đang vẽ / GL còn đọc
         handler.post {
-            overlayDirty = true
+            synchronized(overlayLock) {
+                val apiHasVisual =
+                    loadedTop.isNotEmpty() || loadedBottom.isNotEmpty() ||
+                        mergedPause != null || mergedMarquee.isNotEmpty()
+                val hadVisual =
+                    ScoreboardOverlay.hasCornerLogos() ||
+                        ScoreboardOverlay.pickbaseLogo != null ||
+                        ScoreboardOverlay.pauseImage != null ||
+                        ScoreboardOverlay.hasMarquee()
+
+                if (apiHasVisual) {
+                    // Có data mới → swap; giữ intro đang chạy
+                    ScoreboardOverlay.clearAll(recycleBitmaps = false, clearIntroState = false)
+                    ScoreboardOverlay.topRightLogos = loadedTop
+                    ScoreboardOverlay.bottomRightLogos = loadedBottom
+                    ScoreboardOverlay.marqueeTexts = mergedMarquee
+                    ScoreboardOverlay.pauseImage = mergedPause
+                    // Header scoreboard/scorebug luôn logo_overlay — không dùng logo góc API
+                    reloadBrandLogo()
+                    if (loadedBottom.isNotEmpty()) ScoreboardOverlay.tournamentLogo = loadedBottom.first()
+                } else if (!hadVisual) {
+                    // API trống và RAM trống → logo brand app
+                    reloadBrandLogo()
+                    android.util.Log.w("PB_VIDEO", "Overlay API empty — keep/fallback brand logo_overlay")
+                } else {
+                    // API trống nhưng VideoApp/cache đã có logo góc → KHÔNG xóa
+                    if (ScoreboardOverlay.pickbaseLogo == null || ScoreboardOverlay.pickbaseLogo?.isRecycled == true) {
+                        reloadBrandLogo()
+                    }
+                    android.util.Log.w(
+                        "PB_VIDEO",
+                        "Overlay API returned no logos/marquee — preserving in-memory overlay",
+                    )
+                }
+
+                ScoreboardOverlay.loadedTournamentIds = tournamentIds.toSet()
+                if (gotAnyConfig) {
+                    ScoreboardOverlay.introEnabled = introScorebug
+                    commentary.density = density
+                    commentary.applyEnabled(autoCommentary)
+                } else {
+                    android.util.Log.w("PB_VIDEO", "Overlay API all failed — keep restored commentary/intro flags")
+                }
+                overlayDirty = true
+                lastContentKey = ""
+            }
+            // Lưu disk + prefs — thoát/vào lại không mất logo & TTS
+            if (gotAnyConfig) {
+                OverlayCache.save(
+                    context,
+                    tournamentIds.toSet(),
+                    autoCommentary = autoCommentary,
+                    introScorebug = introScorebug,
+                    commentaryDensity = when (density) {
+                        CommentaryEngine.Density.LOW -> "low"
+                        CommentaryEngine.Density.HIGH -> "high"
+                        else -> "medium"
+                    },
+                )
+            } else if (ScoreboardOverlay.hasCornerLogos() || ScoreboardOverlay.hasMarquee()) {
+                // API lỗi nhưng RAM/cache có logo — vẫn ghi bitmap cache
+                OverlayCache.save(context, tournamentIds.toSet())
+            }
+            android.util.Log.d(
+                "PB_VIDEO",
+                "Overlay loaded from API tids=$tournamentIds top=${loadedTop.size} bottom=${loadedBottom.size} marquee=${mergedMarquee.size} commentary=$autoCommentary intro=$introScorebug density=$density pickbase=${ScoreboardOverlay.pickbaseLogo != null} gotConfig=$gotAnyConfig",
+            )
             refreshOverlay(force = true)
         }
     }
@@ -284,6 +402,9 @@ class StreamManager(
                 android.util.Log.d("PB_OVERLAY", "Score update: ${currentMatch?.scoreLeft}-${currentMatch?.scoreRight} → ${match.scoreLeft}-${match.scoreRight}")
             }
             lastMatchReceivedAt = System.currentTimeMillis()
+            // Intro khi cặp VĐV mới (Davis Cup: teamName = tên VĐV trên sân)
+            ScoreboardOverlay.maybeStartIntro(match)
+            commentary.onMatchUpdate(match)
             currentMatch = match
             overlayDirty = true
         } else {
@@ -296,6 +417,7 @@ class StreamManager(
             if (currentMatch != null) {
                 android.util.Log.w("PB_OVERLAY", "⏹ Scoreboard OFF: Firebase null for ${elapsed}ms, clearing")
             }
+            commentary.onMatchUpdate(null)
             currentMatch = null
             overlayDirty = true
         }
@@ -320,7 +442,7 @@ class StreamManager(
     private var lastMatchReceivedAt = 0L
 
     private fun setupFilter() {
-        if (filterReady) return
+        if (filterReady && imageFilter != null) return
         try {
             val gl = rtmpCamera?.glInterface ?: run {
                 android.util.Log.d("PB_VIDEO", "setupFilter: glInterface null, will retry")
@@ -331,26 +453,54 @@ class StreamManager(
                 android.util.Log.d("PB_VIDEO", "setupFilter: not previewing/streaming yet, will retry")
                 return
             }
-            imageFilter = ImageObjectFilterRender()
+            val reattach = imageFilter != null
+            if (imageFilter == null) {
+                imageFilter = ImageObjectFilterRender()
+            }
+            // Luôn setFilter lại khi filterReady=false — startStream/reconnect có thể drop
+            // filter khỏi GL pipeline; lúc đó setImage vẫn “chạy” nhưng không hiện trên video.
             gl.setFilter(imageFilter)
             imageFilter?.setScale(100f, 100f) // full screen overlay
             imageFilter?.setPosition(TranslateTo.CENTER)
             filterReady = true
-            // Filter mới trống — phải setImage lại dù điểm/tên không đổi (reconnect RTMP)
+            // Filter mới/reattach trống — vẽ ngay trong cùng lần gọi (tránh 1 frame nháy)
             overlayDirty = true
             lastContentKey = ""
-            android.util.Log.i("PB_VIDEO", "setupFilter SUCCESS — overlay active (force redraw)")
+            android.util.Log.i(
+                "PB_VIDEO",
+                "setupFilter SUCCESS — overlay active (reattach=$reattach, force redraw)",
+            )
+            refreshOverlay(force = true)
         } catch (e: Exception) {
             android.util.Log.w("PB_VIDEO", "setupFilter failed (will retry): ${e.message}")
             // Reset so next attempt creates fresh filter
             imageFilter = null
+            filterReady = false
         }
     }
 
-    // 3 buffer — không bao giờ CLEAR/vẽ đè bitmap vừa đưa vào setImage (GL còn đọc → overlay trắng khi ấn điểm)
-    private var overlayBuffers = arrayOfNulls<Bitmap>(3)
+    /** Ép gắn lại filter lên GL (sau startStream / khi nghi mất overlay). */
+    private fun forceReattachFilter() {
+        filterReady = false
+        setupFilter()
+    }
+
+    /** Chỉ reattach khi chưa sẵn; nếu đã sẵn thì chỉ vẽ lại (không nháy setFilter). */
+    private fun ensureOverlayVisible() {
+        if (!filterReady || imageFilter == null) {
+            forceReattachFilter()
+        } else {
+            refreshOverlay(force = true)
+        }
+    }
+
+    /**
+     * Buffer chỉ để Canvas vẽ — KHÔNG đưa thẳng vào setImage.
+     * RootEncoder TextureLoader.load() gọi bitmap.recycle() sau texImage2D
+     * → nếu setImage(poolBitmap) sẽ recycle buffer đang giữ → FATAL "bitmap is recycled".
+     */
+    private var overlayBuffers = arrayOfNulls<Bitmap>(2)
     private var overlayBufferIdx = 0
-    private var lastUploadedBufferIdx = -1
     private val overlayLock = Object()
     private var lastOverlayState = "" // track state changes for logging
     private var lastContentKey = ""
@@ -366,7 +516,8 @@ class StreamManager(
             append(m.paused).append('|')
             append(m.matchFormat).append('|')
             append(m.tournamentName ?: "").append('|')
-            append(m.roundName ?: "")
+            append(m.roundName ?: "").append('|')
+            append(if (ScoreboardOverlay.isIntroActive()) "intro" else "nointro")
         }
     }
 
@@ -382,19 +533,11 @@ class StreamManager(
     }
 
     private fun obtainOverlayBuffer(w: Int, h: Int): Bitmap? {
-        // Chọn buffer khác với bitmap GL đang giữ
-        var attempts = 0
-        do {
-            overlayBufferIdx = (overlayBufferIdx + 1) % overlayBuffers.size
-            attempts++
-        } while (overlayBufferIdx == lastUploadedBufferIdx && attempts < overlayBuffers.size)
-
+        overlayBufferIdx = (overlayBufferIdx + 1) % overlayBuffers.size
         val idx = overlayBufferIdx
         var bmp = overlayBuffers[idx]
         if (bmp == null || bmp.isRecycled || bmp.width != w || bmp.height != h) {
-            bmp?.let {
-                try { if (!it.isRecycled) it.recycle() } catch (_: Exception) {}
-            }
+            // Không recycle buffer cũ tại đây — phòng trường hợp còn reference lạ
             bmp = try {
                 Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
             } catch (e: OutOfMemoryError) {
@@ -420,9 +563,10 @@ class StreamManager(
         val contentKey = matchContentKey(m)
         val contentChanged = contentKey != lastContentKey
         val needMarquee = ScoreboardOverlay.hasMarquee()
+        val needIntro = ScoreboardOverlay.isIntroActive()
 
-        // Không đổi điểm/tên và không có marquee → bỏ frame (giảm nháy + CPU)
-        if (!force && !overlayDirty && !contentChanged && !needMarquee) return
+        // Không đổi điểm/tên và không có marquee/intro → bỏ frame (giảm nháy + CPU)
+        if (!force && !overlayDirty && !contentChanged && !needMarquee && !needIntro) return
 
         val q = actualQuality ?: selectedQuality
         val (w, h) = overlayDrawSize(q)
@@ -433,24 +577,42 @@ class StreamManager(
             else -> "logos_only"
         }
         if (stateKey != lastOverlayState) {
-            android.util.Log.i("PB_OVERLAY", "State: $lastOverlayState → $stateKey | hasLogos=${ScoreboardOverlay.topRightLogos.isNotEmpty()} hasPause=${ScoreboardOverlay.pauseImage != null} hasMarquee=${ScoreboardOverlay.marqueeTexts.isNotEmpty()}")
+            android.util.Log.i("PB_OVERLAY", "State: $lastOverlayState → $stateKey | hasLogos=${ScoreboardOverlay.topRightLogos.isNotEmpty()} pickbase=${ScoreboardOverlay.pickbaseLogo?.takeIf { !it.isRecycled } != null} hasPause=${ScoreboardOverlay.pauseImage != null} hasMarquee=${ScoreboardOverlay.marqueeTexts.isNotEmpty()}")
             lastOverlayState = stateKey
         }
 
         synchronized(overlayLock) {
             try {
                 val bmp = obtainOverlayBuffer(w, h) ?: return
+                if (bmp.isRecycled) {
+                    android.util.Log.w("PB_OVERLAY", "overlay buffer recycled — skip frame")
+                    overlayDirty = true
+                    return
+                }
                 val canvas = Canvas(bmp)
                 canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+                // Đảm bảo luôn có logo header scoreboard
+                if (ScoreboardOverlay.pickbaseLogo == null || ScoreboardOverlay.pickbaseLogo?.isRecycled == true) {
+                    loadPickbaseLogo()
+                }
                 if (m != null) {
                     if (m.paused) ScoreboardOverlay.drawPaused(canvas, bmp.width, bmp.height, m)
                     else ScoreboardOverlay.draw(canvas, bmp.width, bmp.height, m)
                 } else {
                     ScoreboardOverlay.drawLogosOnly(canvas, bmp.width, bmp.height)
                 }
-                // Ping-pong/triple — không copy bitmap mỗi frame; không đụng buffer vừa upload
-                imageFilter?.setImage(bmp)
-                lastUploadedBufferIdx = overlayBufferIdx
+                // Bắt buộc copy: Pedro TextureLoader recycle bitmap sau khi upload GL
+                val forGl = try {
+                    bmp.copy(Bitmap.Config.ARGB_8888, false)
+                } catch (e: OutOfMemoryError) {
+                    android.util.Log.e("PB_OVERLAY", "OOM copy for GL: ${e.message}")
+                    null
+                }
+                if (forGl == null || forGl.isRecycled) {
+                    overlayDirty = true
+                    return
+                }
+                imageFilter?.setImage(forGl)
                 lastContentKey = contentKey
                 overlayDirty = false
             } catch (e: Exception) {
@@ -478,16 +640,14 @@ class StreamManager(
             actualQuality = quality
             camera.startStream(fullUrl)
             onStatusChange("🔴 Đang stream ${quality.label}...")
-            filterReady = false
-            setupFilter()
-            refreshOverlay(force = true)
-            if (!filterReady) {
-                handler.postDelayed({ setupFilter(); refreshOverlay(force = true) }, 100)
-                handler.postDelayed({ setupFilter(); refreshOverlay(force = true) }, 300)
-                handler.postDelayed({ setupFilter(); refreshOverlay(force = true) }, 500)
-                handler.postDelayed({ setupFilter(); refreshOverlay(force = true) }, 1000)
-                handler.postDelayed({ setupFilter(); refreshOverlay(force = true) }, 2000)
-            }
+            // startStream có thể drop filter — gắn lại 1 lần, rồi chỉ refresh (tránh nháy nhiều lần)
+            forceReattachFilter()
+            handler.postDelayed({ ensureOverlayVisible() }, 250)
+            handler.postDelayed({ ensureOverlayVisible() }, 800)
+            handler.postDelayed({
+                if (!filterReady) forceReattachFilter()
+                else refreshOverlay(force = true)
+            }, 1600)
             startOverlayLoop()
             true
         } catch (e: Exception) {
@@ -553,7 +713,7 @@ class StreamManager(
         }
     }
 
-    fun startPreview() {
+    fun startPreview(previewOnly: Boolean = false) {
         // Attempt to use selected camera via Camera2ApiManager reflection
         try {
             val camIdInt = selectedCameraId.toIntOrNull()
@@ -585,10 +745,15 @@ class StreamManager(
             handler.postDelayed({ applyZoomOut() }, 500)
         }
 
+        // Màn test camera: chỉ preview, không gắn overlay/TTS loop
+        if (previewOnly) {
+            android.util.Log.i("PB_VIDEO", "startPreview previewOnly — skip overlay filter")
+            return
+        }
+
         // Setup filter after preview starts (GL context ready)
         handler.postDelayed({
-            setupFilter()
-            refreshOverlay(force = true)
+            setupFilter() // đã vẽ overlay ngay trong setupFilter
             if (overlayRunnable == null) startOverlayLoop()
         }, 1000)
     }
@@ -628,10 +793,20 @@ class StreamManager(
                     val runtime = Runtime.getRuntime()
                     val usedMB = (runtime.totalMemory() - runtime.freeMemory()) / 1048576
                     val maxMB = runtime.maxMemory() / 1048576
-                    android.util.Log.i("PB_STREAM", "Health check: frames=$overlayFrameCount, mem=${usedMB}/${maxMB}MB, streaming=${rtmpCamera?.isStreaming}, bitrate=${rtmpCamera?.getBitrate()}, filterReady=$filterReady, hasMatch=${currentMatch != null}")
+                    android.util.Log.i("PB_STREAM", "Health check: frames=$overlayFrameCount, mem=${usedMB}/${maxMB}MB, streaming=${rtmpCamera?.isStreaming}, bitrate=${rtmpCamera?.getBitrate()}, filterReady=$filterReady, hasMatch=${currentMatch != null}, hasLogos=${ScoreboardOverlay.topRightLogos.isNotEmpty()}, pickbase=${ScoreboardOverlay.pickbaseLogo != null}")
+                    // Chỉ refresh — không setFilter lại (tránh nháy overlay)
+                    if (rtmpCamera?.isStreaming == true && filterReady) {
+                        refreshOverlay(force = true)
+                    } else if (rtmpCamera?.isStreaming == true) {
+                        forceReattachFilter()
+                    }
                 }
-                // Marquee nhanh hơn; không marquee chậm hơn; máy nóng chậm thêm
-                val baseDelay = if (ScoreboardOverlay.hasMarquee()) 100L else 400L
+                // Intro/marquee ~10–15fps đủ mượt; tránh setImage nhanh hơn GL (leak copy trước khi Pedro recycle)
+                val baseDelay = when {
+                    ScoreboardOverlay.isIntroActive() -> 80L
+                    ScoreboardOverlay.hasMarquee() -> 100L
+                    else -> 400L
+                }
                 val delayMs = baseDelay * ThermalHelper.overlayDelayMultiplier()
                 handler.postDelayed(this, delayMs)
             }
@@ -645,7 +820,14 @@ class StreamManager(
         rtmpCamera?.stopStream(); stopOverlayLoop(); onStatusChange("⏹ Đã dừng")
     }
     fun isStreaming(): Boolean = rtmpCamera?.isStreaming == true
+    private var released = false
+
     fun release() {
+        if (released) {
+            android.util.Log.w("PB_STREAM", "🗑 release skipped (already released)")
+            return
+        }
+        released = true
         android.util.Log.w("PB_STREAM", "🗑 release: stopping stream + preview + overlay")
         stopOverlayLoop()
         try { if (rtmpCamera?.isStreaming == true) rtmpCamera?.stopStream(); rtmpCamera?.stopPreview() }
@@ -656,8 +838,9 @@ class StreamManager(
                 overlayBuffers[i] = null
             }
         }
-        lastUploadedBufferIdx = -1
         ScoreboardOverlay.clearLogoScaleCache()
+        ScoreboardOverlay.stopIntroVisual()
+        commentary.release()
         ThermalHelper.stop(context)
         filterReady = false
         imageFilter = null
@@ -677,12 +860,8 @@ class StreamManager(
         val q = actualQuality ?: selectedQuality
         onStatusChange("🔴 LIVE ${q.label}")
         // Force re-setup GL filter after reconnect (old filter may be invalid)
-        filterReady = false
-        handler.post {
-            setupFilter()
-            // Bắt buộc vẽ lại — nếu không, skip dirty-check để trống đến khi đổi điểm
-            refreshOverlay(force = true)
-        }
+        handler.post { forceReattachFilter() }
+        handler.postDelayed({ ensureOverlayVisible() }, 400)
         // Ensure overlay loop is running after reconnect
         if (overlayRunnable == null) {
             handler.post { startOverlayLoop() }

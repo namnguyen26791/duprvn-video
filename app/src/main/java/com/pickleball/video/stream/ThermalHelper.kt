@@ -22,25 +22,44 @@ object ThermalHelper {
         private set
 
     private var listener: PowerManager.OnThermalStatusChangedListener? = null
+    private var started = false
 
+    @Synchronized
     fun start(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
-        val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
-        level = pm.currentThermalStatus
-        val l = PowerManager.OnThermalStatusChangedListener { status ->
-            level = status
-            android.util.Log.i("PB_THERMAL", "Thermal status → $status")
+        if (started) return
+        val pm = context.applicationContext.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
+        try {
+            level = pm.currentThermalStatus
+            val l = PowerManager.OnThermalStatusChangedListener { status ->
+                level = status
+                android.util.Log.i("PB_THERMAL", "Thermal status → $status")
+            }
+            pm.addThermalStatusListener(l)
+            listener = l
+            started = true
+        } catch (e: Exception) {
+            android.util.Log.w("PB_THERMAL", "start failed: ${e.message}")
+            listener = null
+            started = false
         }
-        listener = l
-        pm.addThermalStatusListener(l)
     }
 
+    @Synchronized
     fun stop(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
-        val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
-        listener?.let { pm.removeThermalStatusListener(it) }
+        val l = listener
         listener = null
+        started = false
         level = STATUS_NONE
+        if (l == null) return
+        try {
+            val pm = context.applicationContext.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
+            pm.removeThermalStatusListener(l)
+        } catch (e: Exception) {
+            // "Listener was not added" khi double-release / recreate Activity
+            android.util.Log.w("PB_THERMAL", "stop ignored: ${e.message}")
+        }
     }
 
     /** true khi nên giảm bitrate / overlay */

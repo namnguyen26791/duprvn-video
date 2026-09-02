@@ -126,7 +126,16 @@ object FirebaseMatchListener {
             tournamentName = snap.child("tournamentName").getValue(String::class.java),
             roundName = snap.child("roundName").getValue(String::class.java),
             paused = snap.child("paused").getValue(Boolean::class.java) ?: false,
+            pauseReason = snap.child("pauseReason").getValue(String::class.java)
+                ?: snap.child("pause_reason").getValue(String::class.java)
+                ?: "",
             status = snap.child("status").getValue(String::class.java) ?: "",
+            winScore = snap.child("win_score").getValue(Int::class.java)
+                ?: snap.child("winScore").getValue(Int::class.java)
+                ?: 0,
+            maxScore = snap.child("max_score").getValue(Int::class.java)
+                ?: snap.child("maxScore").getValue(Int::class.java)
+                ?: 0,
         )
     }
 

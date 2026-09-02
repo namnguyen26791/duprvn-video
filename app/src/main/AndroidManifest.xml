@@ -46,6 +46,15 @@
             android:keepScreenOn="true"
             android:theme="@style/Theme.AppCompat.DayNight.NoActionBar" />
 
+        <!-- Test camera (landscape) — căn chỉnh lắp đặt -->
+        <activity
+            android:name=".CameraTestActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:keepScreenOn="true"
+            android:theme="@style/Theme.AppCompat.DayNight.NoActionBar" />
+
         <service
             android:name=".stream.StreamKeepAliveService"
             android:exported="false"

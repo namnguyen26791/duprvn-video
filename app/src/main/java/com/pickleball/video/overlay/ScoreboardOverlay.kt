@@ -50,8 +50,11 @@ object ScoreboardOverlay {
     /** Cache logo đã scale theo kích thước vẽ — tránh createScaledBitmap mỗi frame. */
     private val logoScaleCache = HashMap<String, Bitmap>()
 
-    /** Xóa toàn bộ overlay trong RAM — gọi khi đổi giải / trước reload cache hoặc API. */
-    fun clearAll(recycleBitmaps: Boolean = true) {
+    /**
+     * Xóa toàn bộ overlay trong RAM — gọi khi đổi giải / trước reload cache hoặc API.
+     * @param clearIntroState false khi chỉ swap logo giữa chừng live (giữ scorebug intro).
+     */
+    fun clearAll(recycleBitmaps: Boolean = true, clearIntroState: Boolean = true) {
         clearLogoScaleCache()
         if (recycleBitmaps) {
             // pickbaseLogo/tournamentLogo thường alias phần tử trong list — chỉ recycle 1 lần
@@ -76,6 +79,7 @@ object ScoreboardOverlay {
         pauseImage = null
         marqueeTexts = emptyList()
         loadedTournamentIds = emptySet()
+        if (clearIntroState) clearIntro()
     }
 
     fun hasCornerLogos(): Boolean =
@@ -92,17 +96,64 @@ object ScoreboardOverlay {
 
     fun hasMarquee(): Boolean = marqueeTexts.isNotEmpty()
 
-    private fun scaledLogo(src: Bitmap, targetW: Int, targetH: Int): Bitmap? {
-        if (src.isRecycled || src.width <= 0 || src.height <= 0 || targetW <= 0 || targetH <= 0) return null
-        if (src.width == targetW && src.height == targetH) return src
-        val key = "${System.identityHashCode(src)}:${targetW}x${targetH}"
-        logoScaleCache[key]?.let { cached ->
-            if (!cached.isRecycled) return cached
+    /** Intro scorebug: hiện ~10s ở đáy khi bắt đầu live / đổi trận. */
+    @Volatile var introEnabled: Boolean = false
+    private var introUntilMs: Long = 0L
+    private var introMatch: MatchState? = null
+    private var introShownKey: String? = null
+
+    fun isIntroActive(): Boolean =
+        introEnabled && System.currentTimeMillis() < introUntilMs && introMatch != null
+
+    fun introAlpha(): Float {
+        if (!isIntroActive()) return 0f
+        val now = System.currentTimeMillis()
+        val remain = introUntilMs - now
+        val elapsed = INTRO_DURATION_MS - remain
+        val fadeIn = 400L
+        val fadeOut = 600L
+        return when {
+            elapsed < fadeIn -> (elapsed / fadeIn.toFloat()).coerceIn(0f, 1f)
+            remain < fadeOut -> (remain / fadeOut.toFloat()).coerceIn(0f, 1f)
+            else -> 1f
         }
-        val scaled = Bitmap.createScaledBitmap(src, targetW, targetH, true)
-        logoScaleCache[key] = scaled
-        return scaled
     }
+
+    /**
+     * Gọi khi có trận mới trên live (đổi cặp VĐV / lần đầu có match).
+     * Davis Cup: teamName từ Firebase vẫn là tên VĐV/cặp — đúng yêu cầu.
+     */
+    fun maybeStartIntro(match: MatchState) {
+        if (!introEnabled) return
+        val key = "${match.left.teamName}|${match.right.teamName}|${match.roundName}"
+        if (key == introShownKey) return
+        introShownKey = key
+        // Vào lại giữa trận (đã có điểm) — không chạy intro scorebug lại từ đầu
+        if (match.scoreLeft + match.scoreRight > 0) {
+            android.util.Log.i("PB_OVERLAY", "Intro scorebug SKIP mid-match: ${match.scoreLeft}-${match.scoreRight}")
+            return
+        }
+        introMatch = match.copy(
+            scoreLeft = match.scoreLeft,
+            scoreRight = match.scoreRight,
+        )
+        introUntilMs = System.currentTimeMillis() + INTRO_DURATION_MS
+        android.util.Log.i("PB_OVERLAY", "Intro scorebug START: ${match.left.teamName} vs ${match.right.teamName}")
+    }
+
+    /** Chỉ tắt hình intro đang hiện — giữ introShownKey để không phát lại khi reconnect. */
+    fun stopIntroVisual() {
+        introUntilMs = 0L
+        introMatch = null
+    }
+
+    fun clearIntro() {
+        introUntilMs = 0L
+        introMatch = null
+        introShownKey = null
+    }
+
+    private const val INTRO_DURATION_MS = 10_000L
 
     fun draw(canvas: Canvas, width: Int, height: Int, match: MatchState) {
         val s = height / 720f
@@ -110,12 +161,14 @@ object ScoreboardOverlay {
         drawScoreboard(canvas, match, s, margin, width)
         drawLogos(canvas, width, height, s, margin)
         drawMarquee(canvas, width, height, s)
+        if (isIntroActive()) {
+            drawIntroScorebug(canvas, width, height, introMatch ?: match, introAlpha())
+        }
     }
 
     private fun headerLogo(): Bitmap? {
+        // Chỉ brand logo_overlay (pickbaseLogo) — không lấy logo góc giải
         return pickbaseLogo?.takeIf { !it.isRecycled }
-            ?: tournamentLogo?.takeIf { !it.isRecycled }
-            ?: topRightLogos.firstOrNull { !it.isRecycled }
     }
 
     private fun drawScoreboard(canvas: Canvas, match: MatchState, s: Float, margin: Float, screenW: Int) {
@@ -420,11 +473,133 @@ object ScoreboardOverlay {
         val margin = 12f * s
         drawLogos(canvas, width, height, s, margin)
         drawMarquee(canvas, width, height, s)
+        if (isIntroActive()) {
+            introMatch?.let { drawIntroScorebug(canvas, width, height, it, introAlpha()) }
+        }
     }
 
     /**
-     * Cắt text + thêm "…" nếu vượt quá maxWidth.
+     * Bảng tỉ số mở đầu — ~25% chiều cao, đáy màn hình.
+     * Logo giữa + tên VĐV hai bên + tỉ số.
      */
+    private fun drawIntroScorebug(canvas: Canvas, width: Int, height: Int, match: MatchState, alpha: Float) {
+        if (alpha <= 0.01f) return
+        val s = height / 720f
+        val panelH = height * 0.25f
+        val panelY = height - panelH
+        val a = (alpha * 255).toInt().coerceIn(0, 255)
+        val midX = width / 2f
+        val pad = 20f * s
+
+        val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb((a * 0.92f).toInt().coerceIn(0, 255), 15, 23, 42)
+            style = Paint.Style.FILL
+        }
+        canvas.drawRect(0f, panelY, width.toFloat(), height.toFloat(), bg)
+
+        val accent = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(a, 16, 185, 129)
+        }
+        canvas.drawRect(0f, panelY, width.toFloat(), panelY + 4f * s, accent)
+
+        // Logo giữa scorebug
+        var logoBottom = panelY + 12f * s
+        headerLogo()?.takeIf { !it.isRecycled && it.width > 0 }?.let { logo ->
+            val logoH = (panelH * 0.32f).toInt().coerceAtLeast(1)
+            val logoW = (logoH.toFloat() * logo.width / logo.height).toInt()
+                .coerceIn(1, (width * 0.22f).toInt().coerceAtLeast(1))
+            val scaled = scaledLogo(logo, logoW, logoH) ?: return@let
+            val logoLeft = midX - logoW / 2f
+            val logoTop = panelY + 10f * s
+            val logoBg = RectF(logoLeft - 4f * s, logoTop - 2f * s, logoLeft + logoW + 4f * s, logoTop + logoH + 2f * s)
+            val whiteBg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.argb((a * 0.95f).toInt(), 255, 255, 255)
+            }
+            canvas.drawRoundRect(logoBg, 8f * s, 8f * s, whiteBg)
+            val bmpPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+                this.alpha = a
+            }
+            canvas.drawBitmap(scaled, null, RectF(logoLeft, logoTop, logoLeft + logoW, logoTop + logoH), bmpPaint)
+            logoBottom = logoTop + logoH + 8f * s
+        }
+
+        // Tournament / round dưới logo (hoặc sát mép trên nếu không có logo)
+        val sub = buildString {
+            if (!match.tournamentName.isNullOrEmpty()) append(match.tournamentName)
+            if (!match.roundName.isNullOrEmpty()) {
+                if (isNotEmpty()) append("  ·  ")
+                append(match.roundName)
+            }
+        }
+        var namesY = logoBottom + 18f * s
+        if (sub.isNotEmpty()) {
+            val subP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.argb(a, 148, 163, 184)
+                textSize = 13f * s
+                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                textAlign = Paint.Align.CENTER
+            }
+            canvas.drawText(truncateText(sub, subP, width - pad * 2), midX, logoBottom + 14f * s, subP)
+            namesY = logoBottom + 32f * s
+        }
+
+        val nameP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(a, 248, 250, 252)
+            textSize = 20f * s
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            textAlign = Paint.Align.CENTER
+        }
+        val scoreP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(a, 52, 211, 153)
+            textSize = 36f * s
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            textAlign = Paint.Align.CENTER
+        }
+
+        val scoreText = "${match.scoreLeft}  –  ${match.scoreRight}"
+        val scoreW = scoreP.measureText(scoreText)
+        val sideW = ((width - scoreW) / 2f - pad - 12f * s).coerceAtLeast(60f * s)
+
+        val leftName = shortenName(match.left.teamName.ifBlank { "Đội 1" }, nameP, sideW)
+        val rightName = shortenName(match.right.teamName.ifBlank { "Đội 2" }, nameP, sideW)
+
+        val leftX = pad + sideW / 2f
+        val rightX = width - pad - sideW / 2f
+        // Căn giữa khối tên+điểm trong phần còn lại của panel
+        val blockY = ((namesY + (panelY + panelH - 28f * s)) / 2f).coerceAtLeast(namesY)
+
+        canvas.drawText(leftName, leftX, blockY, nameP)
+        canvas.drawText(scoreText, midX, blockY + 4f * s, scoreP)
+        canvas.drawText(rightName, rightX, blockY, nameP)
+
+        val liveP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(a, 239, 68, 68)
+        }
+        val liveLabel = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(a, 255, 255, 255)
+            textSize = 12f * s
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            textAlign = Paint.Align.CENTER
+        }
+        val liveW = 52f * s
+        val liveH = 20f * s
+        val liveRect = RectF(midX - liveW / 2f, panelY + panelH - liveH - 10f * s, midX + liveW / 2f, panelY + panelH - 10f * s)
+        canvas.drawRoundRect(liveRect, 10f * s, 10f * s, liveP)
+        canvas.drawText("LIVE", liveRect.centerX(), liveRect.centerY() + 4.5f * s, liveLabel)
+    }
+
+    private fun scaledLogo(src: Bitmap, targetW: Int, targetH: Int): Bitmap? {
+        if (src.isRecycled || src.width <= 0 || src.height <= 0 || targetW <= 0 || targetH <= 0) return null
+        if (src.width == targetW && src.height == targetH) return src
+        val key = "${System.identityHashCode(src)}:${targetW}x${targetH}"
+        logoScaleCache[key]?.let { cached ->
+            if (!cached.isRecycled) return cached
+        }
+        val scaled = Bitmap.createScaledBitmap(src, targetW, targetH, true)
+        logoScaleCache[key] = scaled
+        return scaled
+    }
+
     private fun truncateText(text: String, paint: Paint, maxWidth: Float): String {
         if (paint.measureText(text) <= maxWidth) return text
         val ellipsis = "…"

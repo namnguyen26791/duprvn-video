@@ -44,6 +44,7 @@ data class TournamentListResponse(
 data class MatchStreamConfigResponse(
     val rtmp_url: String?,
     val stream_key: String?,
+    val stream_started_at: String? = null,
     val stream_ended_at: String?,
     val status: String?,
     val youtube_video_id: String?,
@@ -85,6 +86,9 @@ data class StreamConfirmedRequest(
 data class OverlayConfig(
     val logos: List<OverlayLogo> = emptyList(),
     val marquee_texts: List<String> = emptyList(),
+    val auto_commentary: Boolean = false,
+    val intro_scorebug: Boolean = false,
+    val commentary_density: String = "medium",
 )
 
 data class OverlayLogo(

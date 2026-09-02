@@ -491,10 +491,18 @@ fun VideoApp() {
                                             var mergedPause: Bitmap? = null
                                             val seenTopUrls = mutableSetOf<String>()
                                             val seenBottomUrls = mutableSetOf<String>()
+                                            var autoCommentary = false
+                                            var introScorebug = false
+                                            var commentaryDensity = "medium"
 
                                             for (tid in selectedTournaments.sorted()) {
                                                 try {
                                                     val overlay = ApiService.create(apiBase).getOverlayConfig(tid)
+                                                    autoCommentary = autoCommentary || overlay.auto_commentary
+                                                    introScorebug = introScorebug || overlay.intro_scorebug
+                                                    if (tid == selectedTournaments.sorted().first()) {
+                                                        commentaryDensity = overlay.commentary_density.ifBlank { "medium" }
+                                                    }
                                                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                                                         for (logo in overlay.logos.filter { it.position == "top_right" }) {
                                                             if (!seenTopUrls.add(logo.url)) continue
@@ -526,14 +534,26 @@ fun VideoApp() {
                                             vn.vdpr.video.overlay.ScoreboardOverlay.bottomRightLogos = mergedBottomBitmaps
                                             vn.vdpr.video.overlay.ScoreboardOverlay.marqueeTexts = mergedMarquee
                                             vn.vdpr.video.overlay.ScoreboardOverlay.pauseImage = mergedPause
-                                            if (mergedTopBitmaps.isNotEmpty()) {
-                                                vn.vdpr.video.overlay.ScoreboardOverlay.pickbaseLogo = mergedTopBitmaps.first()
-                                            }
                                             if (mergedBottomBitmaps.isNotEmpty()) {
                                                 vn.vdpr.video.overlay.ScoreboardOverlay.tournamentLogo = mergedBottomBitmaps.first()
                                             }
+                                            // Header bảng tỉ số / scorebug: luôn logo_overlay.png
+                                            try {
+                                                vn.vdpr.video.overlay.ScoreboardOverlay.pickbaseLogo =
+                                                    android.graphics.BitmapFactory.decodeResource(
+                                                        context.resources,
+                                                        R.drawable.logo_overlay,
+                                                    )
+                                            } catch (_: Exception) {}
                                             vn.vdpr.video.overlay.ScoreboardOverlay.loadedTournamentIds = selectedTournaments
-                                            vn.vdpr.video.overlay.OverlayCache.save(context, selectedTournaments)
+                                            vn.vdpr.video.overlay.ScoreboardOverlay.introEnabled = introScorebug
+                                            vn.vdpr.video.overlay.OverlayCache.save(
+                                                context,
+                                                selectedTournaments,
+                                                autoCommentary = autoCommentary,
+                                                introScorebug = introScorebug,
+                                                commentaryDensity = commentaryDensity,
+                                            )
                                         } catch (_: Exception) {}
                                         step = 2
                                     } catch (e: Exception) { error = "Lỗi: ${e.message}" }
@@ -591,6 +611,19 @@ fun VideoApp() {
                                 color = Color(0xFF334155),
                                 fontWeight = FontWeight.Medium,
                             )
+                        }
+                        Button(
+                            onClick = {
+                                context.startActivity(
+                                    Intent(context, CameraTestActivity::class.java).apply {
+                                        putExtra("camera_id", selectedCameraId)
+                                    }
+                                )
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0EA5E9)),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("📷 Test camera · căn chỉnh góc máy", fontWeight = FontWeight.SemiBold)
                         }
                         val courts = streamConfig?.courts ?: emptyList()
                         val channelCounts = streamConfig?.court_channels ?: emptyMap()
