@@ -73,21 +73,6 @@ class StreamActivity : AppCompatActivity() {
         // Force IPv4 to avoid RTMP connection failures on IPv6-only networks
         System.setProperty("java.net.preferIPv4Stack", "true")
 
-        // Load overlay from disk cache if static fields are empty (process was killed)
-        // Chỉ load khi cache khớp đúng set giải đang chọn — tránh logo giải khác
-        if (vn.vdpr.video.overlay.ScoreboardOverlay.topRightLogos.isEmpty() &&
-            vn.vdpr.video.overlay.ScoreboardOverlay.bottomRightLogos.isEmpty()) {
-            val prefs = getSharedPreferences("video_app", MODE_PRIVATE)
-            val expectedTids = prefs.getStringSet("tids", emptySet())
-                ?.mapNotNull { it.toIntOrNull() }
-                ?.toSet()
-                ?: emptySet()
-            val loaded = vn.vdpr.video.overlay.OverlayCache.load(this, expectedTids)
-            android.util.Log.i("PB_OVERLAY", "Cache load: $loaded tids=$expectedTids | topLogos=${vn.vdpr.video.overlay.ScoreboardOverlay.topRightLogos.size} bottomLogos=${vn.vdpr.video.overlay.ScoreboardOverlay.bottomRightLogos.size}")
-        } else {
-            android.util.Log.i("PB_OVERLAY", "Overlay already in memory: topLogos=${vn.vdpr.video.overlay.ScoreboardOverlay.topRightLogos.size} bottomLogos=${vn.vdpr.video.overlay.ScoreboardOverlay.bottomRightLogos.size}")
-        }
-
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         requestWindowFeature(Window.FEATURE_NO_TITLE)
         window.setFlags(
@@ -103,6 +88,14 @@ class StreamActivity : AppCompatActivity() {
         val cameraId = intent.getStringExtra("camera_id") ?: "0"
         val qualityName = intent.getStringExtra("stream_quality") ?: "Q_720P"
         val quality = try { StreamQuality.valueOf(qualityName) } catch (_: Exception) { StreamQuality.Q_720P }
+
+        // Overlay: khớp đúng giải đang chọn — tránh logo giải cũ còn trong RAM
+        val expectedTids = getSharedPreferences("video_app", MODE_PRIVATE)
+            .getStringSet("tids", emptySet())
+            ?.mapNotNull { it.toIntOrNull() }
+            ?.toSet()
+            ?: emptySet()
+        ensureOverlayForStream(expectedTids, apiBase, tournamentId)
 
         val root = FrameLayout(this)
         root.setBackgroundColor(Color.BLACK)
@@ -131,7 +124,8 @@ class StreamActivity : AppCompatActivity() {
         }
         streamManager?.selectedQuality = quality
         streamManager?.init(courtName, cameraId)
-        streamManager?.loadOverlayConfig(apiBase, tournamentId)
+        // force=true: luôn tải lại logo từ API theo giải đang chọn (tránh dính trên+dưới giải cũ)
+        streamManager?.loadOverlayConfig(apiBase, tournamentId, expectedTids, force = true)
 
         openGlView.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
@@ -316,6 +310,35 @@ class StreamActivity : AppCompatActivity() {
         ))
     }
 
+    private fun ensureOverlayForStream(expectedTids: Set<Int>, apiBase: String, streamTournamentId: Int) {
+        val loaded = vn.vdpr.video.overlay.ScoreboardOverlay.loadedTournamentIds
+        val tidsOk = expectedTids.isNotEmpty() && loaded == expectedTids
+        val singleOk = expectedTids.isEmpty() && streamTournamentId > 0 && loaded == setOf(streamTournamentId)
+
+        if ((tidsOk || singleOk) && vn.vdpr.video.overlay.ScoreboardOverlay.hasCornerLogos()) {
+            android.util.Log.i(
+                "PB_OVERLAY",
+                "Overlay OK in memory: loaded=$loaded expected=$expectedTids streamTid=$streamTournamentId",
+            )
+            return
+        }
+
+        android.util.Log.w(
+            "PB_OVERLAY",
+            "Overlay stale or missing — reload (loaded=$loaded expected=$expectedTids streamTid=$streamTournamentId)",
+        )
+        vn.vdpr.video.overlay.ScoreboardOverlay.clearAll()
+
+        if (expectedTids.isNotEmpty()) {
+            val fromCache = vn.vdpr.video.overlay.OverlayCache.load(this, expectedTids)
+            if (fromCache && vn.vdpr.video.overlay.ScoreboardOverlay.hasCornerLogos()) {
+                android.util.Log.i("PB_OVERLAY", "Overlay restored from disk cache tids=$expectedTids")
+                return
+            }
+        }
+        // API load do StreamManager.loadOverlayConfig (sau init)
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         configCheckRunnable?.let { handler.removeCallbacks(it) }
@@ -341,6 +364,8 @@ class StreamActivity : AppCompatActivity() {
             streamEndedConfirmCount = 0
             lastRtmpUrl = null
             lastStreamKey = null
+            // Logo giải cũ — xóa trước khi recreate cho trận/giải mới
+            vn.vdpr.video.overlay.ScoreboardOverlay.clearAll()
             // Restart with new intent
             setIntent(intent)
             recreate()

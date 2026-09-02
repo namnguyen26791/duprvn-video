@@ -43,10 +43,43 @@ object ScoreboardOverlay {
         }
     var marqueeTexts: List<String> = emptyList()
     var pauseImage: Bitmap? = null
+    /** Giải nào đã load logo (khớp SharedPreferences tids hoặc API đơn giải). */
+    var loadedTournamentIds: Set<Int> = emptySet()
     private var marqueeOffset = 0f
 
     /** Cache logo đã scale theo kích thước vẽ — tránh createScaledBitmap mỗi frame. */
     private val logoScaleCache = HashMap<String, Bitmap>()
+
+    /** Xóa toàn bộ overlay trong RAM — gọi khi đổi giải / trước reload cache hoặc API. */
+    fun clearAll(recycleBitmaps: Boolean = true) {
+        clearLogoScaleCache()
+        if (recycleBitmaps) {
+            // pickbaseLogo/tournamentLogo thường alias phần tử trong list — chỉ recycle 1 lần
+            val unique = LinkedHashSet<Bitmap>()
+            topRightLogos.forEach { unique.add(it) }
+            bottomRightLogos.forEach { unique.add(it) }
+            pickbaseLogo?.let { unique.add(it) }
+            tournamentLogo?.let { unique.add(it) }
+            pauseImage?.let { unique.add(it) }
+            unique.forEach { b ->
+                if (!b.isRecycled) {
+                    try {
+                        b.recycle()
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+        topRightLogos = emptyList()
+        bottomRightLogos = emptyList()
+        pickbaseLogo = null
+        tournamentLogo = null
+        pauseImage = null
+        marqueeTexts = emptyList()
+        loadedTournamentIds = emptySet()
+    }
+
+    fun hasCornerLogos(): Boolean =
+        topRightLogos.isNotEmpty() || bottomRightLogos.isNotEmpty()
 
     fun clearLogoScaleCache() {
         logoScaleCache.values.forEach { bmp ->
@@ -299,11 +332,11 @@ object ScoreboardOverlay {
             isDither = true
         }
 
-        // Top-right logos — thêm margin phía trên
+        // Chỉ vẽ đúng list góc — KHÔNG fallback pickbaseLogo/tournamentLogo
+        // (fallback cũ khiến logo giải trước hiện lại cả trên + dưới khi list rỗng tạm thời)
         val topLogoY = margin + 10f * s
-        val activeTopLogos = if (topRightLogos.isNotEmpty()) topRightLogos else listOfNotNull(pickbaseLogo)
         var topLogoX = width.toFloat() - margin
-        for (logo in activeTopLogos.reversed()) {
+        for (logo in topRightLogos.reversed()) {
             if (logo.isRecycled || logo.height <= 0 || logo.width <= 0) continue
             val logoH = (73f * s).toInt().coerceAtLeast(1) // 81px @720p, −10%
             val logoW = (logoH.toFloat() * logo.width / logo.height).toInt().coerceAtLeast(1)
@@ -314,13 +347,11 @@ object ScoreboardOverlay {
             topLogoX -= 10f * s
         }
 
-        // Bottom-right logos — dịch sát bottom hơn
-        val activeBottomLogos = if (bottomRightLogos.isNotEmpty()) bottomRightLogos else listOfNotNull(tournamentLogo)
         var bottomLogoX = width.toFloat() - margin
         val marqueeH = if (marqueeTexts.isNotEmpty()) 28f * s else 0f
         val bottomLogoH = (59f * s).toInt().coerceAtLeast(1)
         val bottomLogoY = height - marqueeH - bottomLogoH - 4f * s
-        for (logo in activeBottomLogos.reversed()) {
+        for (logo in bottomRightLogos.reversed()) {
             if (logo.isRecycled || logo.height <= 0 || logo.width <= 0) continue
             val tLogoH = bottomLogoH
             val tLogoW = (tLogoH.toFloat() * logo.width / logo.height).toInt().coerceAtLeast(1)

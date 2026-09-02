@@ -74,7 +74,9 @@ object OverlayCache {
                 .toSet()
 
             if (expectedTournamentIds.isNotEmpty() && cachedTids != expectedTournamentIds) {
-                Log.w(TAG, "Overlay cache tids mismatch: cached=$cachedTids expected=$expectedTournamentIds — skip")
+                Log.w(TAG, "Overlay cache tids mismatch: cached=$cachedTids expected=$expectedTournamentIds — clear")
+                clear(context)
+                ScoreboardOverlay.clearAll()
                 return false
             }
 
@@ -121,6 +123,7 @@ object OverlayCache {
                 marqueeFile.readText().split("\n").filter { it.isNotBlank() }
             } else emptyList()
 
+            ScoreboardOverlay.loadedTournamentIds = cachedTids
             Log.d(TAG, "Loaded overlay cache: tids=$cachedTids top=${topList.size} bottom=${bottomList.size}")
             return true
         } catch (e: Exception) {

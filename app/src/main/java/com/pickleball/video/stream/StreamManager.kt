@@ -173,8 +173,9 @@ class StreamManager(
         android.util.Log.i("PB_OVERLAY", "StreamManager.init: court=$courtName camera=$cameraId quality=${selectedQuality.label} topLogos=${ScoreboardOverlay.topRightLogos.size} bottomLogos=${ScoreboardOverlay.bottomRightLogos.size} pauseImg=${ScoreboardOverlay.pauseImage != null} marquee=${ScoreboardOverlay.marqueeTexts.size}")
     }
 
-    /** Logo mặc định từ res/drawable/logo.png */
+    /** Logo mặc định từ res/drawable/logo.png — chỉ khi chưa có overlay giải */
     private fun loadPickbaseLogo() {
+        if (ScoreboardOverlay.hasCornerLogos()) return
         try {
             ScoreboardOverlay.pickbaseLogo = BitmapFactory.decodeResource(context.resources, R.drawable.logo)
         } catch (e: Exception) {
@@ -182,59 +183,91 @@ class StreamManager(
         }
     }
 
-    /** Load overlay config from API (logos + marquee) */
-    fun loadOverlayConfig(apiBase: String, tournamentId: Int) {
-        if (tournamentId <= 0) return
-        // Nếu đã có logos (load từ VideoApp) thì không ghi đè
-        if (ScoreboardOverlay.topRightLogos.isNotEmpty() || ScoreboardOverlay.bottomRightLogos.isNotEmpty()) {
-            android.util.Log.d("PB_VIDEO", "loadOverlayConfig: logos already loaded, skipping")
+    /**
+     * Load overlay config from API (logos + marquee) — một hoặc nhiều giải.
+     * @param force luôn gọi API (bỏ qua RAM) — dùng khi mở StreamActivity để chắc logo đúng giải.
+     */
+    fun loadOverlayConfig(
+        apiBase: String,
+        tournamentId: Int,
+        expectedTournamentIds: Set<Int> = emptySet(),
+        force: Boolean = false,
+    ) {
+        val tids = when {
+            expectedTournamentIds.isNotEmpty() -> expectedTournamentIds
+            tournamentId > 0 -> setOf(tournamentId)
+            else -> return
+        }
+
+        if (!force &&
+            ScoreboardOverlay.loadedTournamentIds == tids &&
+            ScoreboardOverlay.hasCornerLogos()
+        ) {
+            android.util.Log.d("PB_VIDEO", "loadOverlayConfig: already loaded for tids=$tids — skip")
             return
         }
+
         Thread {
             try {
-                val api = vn.vdpr.video.data.ApiService.create(apiBase)
-                val config = kotlinx.coroutines.runBlocking { api.getOverlayConfig(tournamentId) }
-
-                // Load top-right logos
-                val topLogos = config.logos.filter { it.position == "top_right" }
-                val loadedTop = mutableListOf<Bitmap>()
-                for (logo in topLogos) {
-                    loadImageFromUrl(logo.url, BitmapUtils.MAX_LOGO_EDGE) { bmp -> loadedTop.add(bmp) }
-                }
-                if (loadedTop.isNotEmpty()) {
-                    ScoreboardOverlay.topRightLogos = loadedTop
-                    ScoreboardOverlay.pickbaseLogo = loadedTop.first()
-                }
-
-                // Load bottom-right logos
-                val bottomLogos = config.logos.filter { it.position == "bottom_right" }
-                val loadedBottom = mutableListOf<Bitmap>()
-                for (logo in bottomLogos) {
-                    loadImageFromUrl(logo.url, BitmapUtils.MAX_LOGO_EDGE) { bmp -> loadedBottom.add(bmp) }
-                }
-                if (loadedBottom.isNotEmpty()) {
-                    ScoreboardOverlay.bottomRightLogos = loadedBottom
-                    ScoreboardOverlay.tournamentLogo = loadedBottom.first()
-                }
-
-                // Pause image
-                config.logos.firstOrNull { it.position == "pause" }?.let { logo ->
-                    loadImageFromUrl(logo.url, BitmapUtils.MAX_PAUSE_EDGE) { bmp -> ScoreboardOverlay.pauseImage = bmp }
-                }
-
-                // Set marquee texts
-                if (config.marquee_texts.isNotEmpty()) {
-                    ScoreboardOverlay.marqueeTexts = config.marquee_texts
-                }
-                android.util.Log.d("PB_VIDEO", "Overlay config loaded: ${config.logos.size} logos, ${config.marquee_texts.size} texts, topRight=${loadedTop.size}, bottomRight=${loadedBottom.size}")
-                handler.post {
-                    overlayDirty = true
-                    refreshOverlay(force = true)
-                }
+                loadOverlayFromApi(apiBase, tids.sorted())
             } catch (e: Exception) {
                 android.util.Log.w("PB_VIDEO", "Failed to load overlay config: ${e.message}")
             }
         }.start()
+    }
+
+    private fun loadOverlayFromApi(apiBase: String, tournamentIds: List<Int>) {
+        val api = vn.vdpr.video.data.ApiService.create(apiBase)
+        ScoreboardOverlay.clearAll()
+
+        val loadedTop = mutableListOf<Bitmap>()
+        val loadedBottom = mutableListOf<Bitmap>()
+        val mergedMarquee = mutableListOf<String>()
+        var mergedPause: Bitmap? = null
+        val seenTopUrls = mutableSetOf<String>()
+        val seenBottomUrls = mutableSetOf<String>()
+
+        for (tid in tournamentIds) {
+            try {
+                val config = kotlinx.coroutines.runBlocking { api.getOverlayConfig(tid) }
+
+                for (logo in config.logos.filter { it.position == "top_right" }) {
+                    if (!seenTopUrls.add(logo.url)) continue
+                    loadImageFromUrl(logo.url, BitmapUtils.MAX_LOGO_EDGE) { bmp -> loadedTop.add(bmp) }
+                }
+                for (logo in config.logos.filter { it.position == "bottom_right" }) {
+                    if (!seenBottomUrls.add(logo.url)) continue
+                    loadImageFromUrl(logo.url, BitmapUtils.MAX_LOGO_EDGE) { bmp -> loadedBottom.add(bmp) }
+                }
+                if (mergedPause == null) {
+                    config.logos.firstOrNull { it.position == "pause" }?.let { logo ->
+                        loadImageFromUrl(logo.url, BitmapUtils.MAX_PAUSE_EDGE) { bmp -> mergedPause = bmp }
+                    }
+                }
+                for (text in config.marquee_texts) {
+                    if (text.isNotBlank() && text !in mergedMarquee) mergedMarquee.add(text)
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("PB_VIDEO", "Overlay tid=$tid failed: ${e.message}")
+            }
+        }
+
+        ScoreboardOverlay.topRightLogos = loadedTop
+        ScoreboardOverlay.bottomRightLogos = loadedBottom
+        ScoreboardOverlay.marqueeTexts = mergedMarquee
+        ScoreboardOverlay.pauseImage = mergedPause
+        if (loadedTop.isNotEmpty()) ScoreboardOverlay.pickbaseLogo = loadedTop.first()
+        if (loadedBottom.isNotEmpty()) ScoreboardOverlay.tournamentLogo = loadedBottom.first()
+        ScoreboardOverlay.loadedTournamentIds = tournamentIds.toSet()
+
+        android.util.Log.d(
+            "PB_VIDEO",
+            "Overlay loaded from API tids=$tournamentIds top=${loadedTop.size} bottom=${loadedBottom.size} marquee=${mergedMarquee.size}",
+        )
+        handler.post {
+            overlayDirty = true
+            refreshOverlay(force = true)
+        }
     }
 
     private fun loadImageFromUrl(imageUrl: String, maxEdge: Int, onLoaded: (Bitmap) -> Unit) {

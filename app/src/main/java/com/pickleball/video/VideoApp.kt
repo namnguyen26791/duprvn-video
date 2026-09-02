@@ -483,12 +483,7 @@ fun VideoApp() {
                                         // (tránh dính logo giải trước / giải không chọn)
                                         try {
                                             vn.vdpr.video.overlay.OverlayCache.clear(context)
-                                            vn.vdpr.video.overlay.ScoreboardOverlay.topRightLogos = emptyList()
-                                            vn.vdpr.video.overlay.ScoreboardOverlay.bottomRightLogos = emptyList()
-                                            vn.vdpr.video.overlay.ScoreboardOverlay.pauseImage = null
-                                            vn.vdpr.video.overlay.ScoreboardOverlay.marqueeTexts = emptyList()
-                                            vn.vdpr.video.overlay.ScoreboardOverlay.pickbaseLogo = null
-                                            vn.vdpr.video.overlay.ScoreboardOverlay.tournamentLogo = null
+                                            vn.vdpr.video.overlay.ScoreboardOverlay.clearAll()
 
                                             val mergedTopBitmaps = mutableListOf<Bitmap>()
                                             val mergedBottomBitmaps = mutableListOf<Bitmap>()
@@ -537,6 +532,7 @@ fun VideoApp() {
                                             if (mergedBottomBitmaps.isNotEmpty()) {
                                                 vn.vdpr.video.overlay.ScoreboardOverlay.tournamentLogo = mergedBottomBitmaps.first()
                                             }
+                                            vn.vdpr.video.overlay.ScoreboardOverlay.loadedTournamentIds = selectedTournaments
                                             vn.vdpr.video.overlay.OverlayCache.save(context, selectedTournaments)
                                         } catch (_: Exception) {}
                                         step = 2
@@ -557,12 +553,7 @@ fun VideoApp() {
                             tournamentTotal = 0
                             // Clear overlay cache khi chọn lại giải
                             vn.vdpr.video.overlay.OverlayCache.clear(context)
-                            vn.vdpr.video.overlay.ScoreboardOverlay.topRightLogos = emptyList()
-                            vn.vdpr.video.overlay.ScoreboardOverlay.bottomRightLogos = emptyList()
-                            vn.vdpr.video.overlay.ScoreboardOverlay.pauseImage = null
-                            vn.vdpr.video.overlay.ScoreboardOverlay.marqueeTexts = emptyList()
-                            vn.vdpr.video.overlay.ScoreboardOverlay.pickbaseLogo = null
-                            vn.vdpr.video.overlay.ScoreboardOverlay.tournamentLogo = null
+                            vn.vdpr.video.overlay.ScoreboardOverlay.clearAll()
                         }) { Text("← Quay lại") }
                     }
 
