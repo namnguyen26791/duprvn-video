@@ -96,7 +96,7 @@ object ScoreboardOverlay {
 
     fun hasMarquee(): Boolean = marqueeTexts.isNotEmpty()
 
-    /** Intro scorebug: hiện ~10s ở đáy khi bắt đầu live / đổi trận. */
+    /** Intro scorebug: hiện ~15s ở đáy khi bắt đầu live / đổi trận. */
     @Volatile var introEnabled: Boolean = false
     private var introUntilMs: Long = 0L
     private var introMatch: MatchState? = null
@@ -107,16 +107,8 @@ object ScoreboardOverlay {
 
     fun introAlpha(): Float {
         if (!isIntroActive()) return 0f
-        val now = System.currentTimeMillis()
-        val remain = introUntilMs - now
-        val elapsed = INTRO_DURATION_MS - remain
-        val fadeIn = 400L
-        val fadeOut = 600L
-        return when {
-            elapsed < fadeIn -> (elapsed / fadeIn.toFloat()).coerceIn(0f, 1f)
-            remain < fadeOut -> (remain / fadeOut.toFloat()).coerceIn(0f, 1f)
-            else -> 1f
-        }
+        // Hiện đặc 100% suốt thời gian rồi tắt HẲN (không fade để tránh nháy/đọng mờ).
+        return 1f
     }
 
     /**
@@ -141,6 +133,20 @@ object ScoreboardOverlay {
         android.util.Log.i("PB_OVERLAY", "Intro scorebug START: ${match.left.teamName} vs ${match.right.teamName}")
     }
 
+    /**
+     * Có điểm đầu tiên (khác 0-0) → tắt intro NGAY, không chờ hết 15s.
+     * Trả về true nếu vừa tắt (để caller redraw frame sạch).
+     */
+    fun endIntroIfScored(match: MatchState): Boolean {
+        if (!isIntroActive()) return false
+        if (match.scoreLeft + match.scoreRight > 0) {
+            android.util.Log.i("PB_OVERLAY", "Intro scorebug END (scored ${match.scoreLeft}-${match.scoreRight})")
+            stopIntroVisual()
+            return true
+        }
+        return false
+    }
+
     /** Chỉ tắt hình intro đang hiện — giữ introShownKey để không phát lại khi reconnect. */
     fun stopIntroVisual() {
         introUntilMs = 0L
@@ -153,7 +159,7 @@ object ScoreboardOverlay {
         introShownKey = null
     }
 
-    private const val INTRO_DURATION_MS = 10_000L
+    private const val INTRO_DURATION_MS = 15_000L
 
     fun draw(canvas: Canvas, width: Int, height: Int, match: MatchState) {
         val s = height / 720f

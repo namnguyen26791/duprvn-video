@@ -94,7 +94,10 @@ class ScoreboardFilterRender : BaseFilterRender() {
 
     private fun rebuildBitmap() {
         val m = matchState
-        val h = m.hashCode() + courtName.hashCode()
+        // Intro đặc 100% rồi tắt hẳn (không fade). Hash gồm cờ intro on/off:
+        // khi intro tắt (1→0) hash đổi → rebuild frame sạch để xóa scorebug, không đọng mờ.
+        val introActive = ScoreboardOverlay.isIntroActive()
+        val h = m.hashCode() + courtName.hashCode() + (if (introActive) 1 else 0)
         if (h == lastHash) return
         lastHash = h
         val w = 1280; val ht = 720

@@ -20,10 +20,14 @@ object FirebaseMatchListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 if (snapshot.exists()) {
                     val status = snapshot.child("status").getValue(String::class.java) ?: ""
-                    if (status == "playing" || status == "paused") {
-                        trySend(parseMatch(snapshot))
-                    } else {
-                        trySend(null)
+                    when (status) {
+                        "playing", "paused" -> trySend(parseMatch(snapshot))
+                        "resolved" -> {
+                            // Trọng tài đã ấn kết thúc — emit match với status=resolved
+                            // để commentary đọc câu kết trước khi stream finish
+                            trySend(parseMatch(snapshot).copy(status = "resolved"))
+                        }
+                        else -> trySend(null)
                     }
                 } else {
                     trySend(null)
@@ -93,7 +97,8 @@ object FirebaseMatchListener {
             val tid = child.child("tournamentId").getValue(Int::class.java) ?: 0
 
             if (court != courtName) continue
-            if (status != "playing") continue
+            // Chấp nhận resolved để commentary đọc được câu kết (trọng tài đã ấn kết thúc)
+            if (status != "playing" && status != "resolved") continue
             if ((now - updatedAt) > 7200000) continue
             if (tournamentId > 0 && tid > 0 && tid != tournamentId) continue
 
@@ -105,7 +110,7 @@ object FirebaseMatchListener {
         }
 
         if (bestChild != null) {
-            android.util.Log.d("PB_VIDEO", "  → MATCHED: ${bestChild.key} updatedAt=${bestUpdatedAt}")
+            android.util.Log.d("PB_VIDEO", "  → MATCHED: ${bestChild.key} updatedAt=${bestUpdatedAt} status=${bestChild.child("status").getValue(String::class.java)}")
             return parseMatch(bestChild)
         }
         return null
@@ -120,6 +125,7 @@ object FirebaseMatchListener {
             serve = snap.child("serve").getValue(String::class.java) ?: "left",
             serverNum = snap.child("serverNum").getValue(Int::class.java) ?: 2,
             serverHand = snap.child("serverHand").getValue(Int::class.java) ?: 1,
+            serverIsHand1 = snap.child("serverIsHand1").getValue(Boolean::class.java) ?: true,
             courtSwapped = snap.child("courtSwapped").getValue(Boolean::class.java) ?: false,
             matchFormat = snap.child("matchFormat").getValue(String::class.java) ?: "doubles",
             court = snap.child("court").getValue(String::class.java),

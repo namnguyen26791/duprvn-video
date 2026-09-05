@@ -404,6 +404,8 @@ class StreamManager(
             lastMatchReceivedAt = System.currentTimeMillis()
             // Intro khi cặp VĐV mới (Davis Cup: teamName = tên VĐV trên sân)
             ScoreboardOverlay.maybeStartIntro(match)
+            // Có điểm đầu tiên → tắt intro ngay (không chờ hết 15s)
+            ScoreboardOverlay.endIntroIfScored(match)
             commentary.onMatchUpdate(match)
             currentMatch = match
             overlayDirty = true
@@ -508,6 +510,8 @@ class StreamManager(
 
     private fun matchContentKey(m: MatchState?): String {
         if (m == null) return "logos_only"
+        // Intro chỉ có 2 trạng thái: đang hiện (đặc 100%) / tắt hẳn — không fade → không nháy
+        val introOn = if (ScoreboardOverlay.isIntroActive()) 1 else 0
         return buildString {
             append(m.left.teamName).append('|')
             append(m.right.teamName).append('|')
@@ -517,7 +521,7 @@ class StreamManager(
             append(m.matchFormat).append('|')
             append(m.tournamentName ?: "").append('|')
             append(m.roundName ?: "").append('|')
-            append(if (ScoreboardOverlay.isIntroActive()) "intro" else "nointro")
+            append("intro").append(introOn)
         }
     }
 
@@ -640,14 +644,13 @@ class StreamManager(
             actualQuality = quality
             camera.startStream(fullUrl)
             onStatusChange("🔴 Đang stream ${quality.label}...")
-            // startStream có thể drop filter — gắn lại 1 lần, rồi chỉ refresh (tránh nháy nhiều lần)
+            // startStream có thể drop filter — gắn lại 1 lần rồi refresh (tránh nháy nhiều lần)
             forceReattachFilter()
-            handler.postDelayed({ ensureOverlayVisible() }, 250)
-            handler.postDelayed({ ensureOverlayVisible() }, 800)
+            handler.postDelayed({ ensureOverlayVisible() }, 300)
             handler.postDelayed({
                 if (!filterReady) forceReattachFilter()
                 else refreshOverlay(force = true)
-            }, 1600)
+            }, 1200)
             startOverlayLoop()
             true
         } catch (e: Exception) {
@@ -801,9 +804,9 @@ class StreamManager(
                         forceReattachFilter()
                     }
                 }
-                // Intro/marquee ~10–15fps đủ mượt; tránh setImage nhanh hơn GL (leak copy trước khi Pedro recycle)
+                // Intro: ~8fps đủ mượt, giảm copy/setImage (bớt nháy)
                 val baseDelay = when {
-                    ScoreboardOverlay.isIntroActive() -> 80L
+                    ScoreboardOverlay.isIntroActive() -> 120L
                     ScoreboardOverlay.hasMarquee() -> 100L
                     else -> 400L
                 }

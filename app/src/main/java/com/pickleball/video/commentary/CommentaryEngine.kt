@@ -45,12 +45,25 @@ class CommentaryEngine(private val context: Context) : TextToSpeech.OnInitListen
     private var lastCourtSwapped: Boolean? = null
     private var lastSpeakAt = 0L
     private var speaking = false
+    /** Câu mới nhất chờ nói xong câu hiện tại — bỏ qua các câu trung gian. */
+    private var pendingSpeak: String? = null
+    private var idleStreak = 0
+    /** Đã kết thúc trận — chỉ cho câu kết, không idle/điểm thêm. */
+    @Volatile private var matchEnded = false
+    /** Giữ luật điểm từ Firebase khi một số update thiếu field. */
+    private var stickyWinScore = 0
+    private var stickyMaxScore = 0
+    private var basePitch = 1.0f
+    private var baseRate = 1.08f
+    /** Máy chỉ có pack TTS mặc định (A70 hay gặp) — dùng profile pitch/rate riêng. */
+    private var limitedVoiceProfile = false
     private val recentPhrases = ArrayDeque<String>()
     private val pointStreak = mutableMapOf<String, Int>()
     private var pendingMatch: MatchState? = null
     @Volatile private var currentMatch: MatchState? = null
     private var lastScoreChangeAt = 0L
     private var tensionRunnable: Runnable? = null
+    private val pendingFlushRunnable = Runnable { flushPendingSpeak() }
     private var lastNameStyle = ""
     private var lastOtherStyle = ""
     private val anonOther = listOf(
@@ -107,6 +120,8 @@ class CommentaryEngine(private val context: Context) : TextToSpeech.OnInitListen
         pendingMatch = null
         currentMatch = null
         speaking = false
+        pendingSpeak = null
+        mainHandler.removeCallbacks(pendingFlushRunnable)
         try {
             tts?.stop()
             tts?.shutdown()
@@ -137,30 +152,32 @@ class CommentaryEngine(private val context: Context) : TextToSpeech.OnInitListen
         }
         ready = langResult >= 0
         preferWarmMaleVoice(engine)
-        // Pitch thấp hơn nếu vẫn là giọng nữ mặc định — nghe “nam” hơn
-        val vName = engine.voice?.name?.lowercase().orEmpty()
-        val soundsFemale = vName.contains("female") || vName.contains("fem") ||
-            vName.contains("x-vie") || vName.contains("x-vif") ||
-            vName == "vi-vn-language" || vName.endsWith("-language")
-        engine.setPitch(if (soundsFemale) 0.72f else 0.85f)
-        engine.setSpeechRate(1.15f)
+        applyVoiceProsody(engine)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             engine.setAudioAttributes(
                 AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build()
             )
         }
         engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) { speaking = true }
-            override fun onDone(utteranceId: String?) { speaking = false; abandonFocus() }
+            override fun onDone(utteranceId: String?) {
+                speaking = false
+                abandonFocus()
+                mainHandler.post { flushPendingSpeak() }
+            }
             @Deprecated("Deprecated in Java")
-            override fun onError(utteranceId: String?) { speaking = false; abandonFocus() }
+            override fun onError(utteranceId: String?) {
+                speaking = false
+                abandonFocus()
+                mainHandler.post { flushPendingSpeak() }
+            }
         })
         android.util.Log.i(
             "PB_COMMENTARY",
-            "TTS ready=$ready voice=${engine.voice?.name} pitch=${if (soundsFemale) 0.72f else 0.85f}",
+            "TTS ready=$ready voice=${engine.voice?.name} pitch=$basePitch rate=$baseRate limited=$limitedVoiceProfile",
         )
         pendingMatch?.let { m ->
             pendingMatch = null
@@ -193,39 +210,92 @@ class CommentaryEngine(private val context: Context) : TextToSpeech.OnInitListen
                 if (n.contains("x-vid") || n.contains("-vid-") || n.contains("_vid_")) s += 100
                 if (n.contains("male") || n.contains("#male") || n.contains("-m-") || n.contains("_m_")) s += 90
                 if (Regex("""(^|[^a-z])nam([^a-z]|$)""").containsMatchIn(n)) s += 80
+                // Neural / HQ — ít máy hơn language pack cũ
+                if (n.contains("wavenet") || n.contains("neural") || n.contains("studio") ||
+                    n.contains("journey") || n.contains("chirp") || n.contains("news")
+                ) s += 55
                 if (n.contains("dmm") || n.contains("wavenet-b") || n.contains("wavenet-d") ||
                     n.contains("standard-b") || n.contains("standard-d")
                 ) s += 40
                 // Nữ — phạt nặng
                 if (n.contains("x-vie") || n.contains("x-vif") || n.contains("-vie-") || n.contains("-vif-")) s -= 120
                 if (n.contains("female") || n.contains("fem") || n.contains("nữ") || n.contains("nu ")) s -= 120
-                // Generic language pack thường là nữ
-                if (n == "vi-vn-language" || n.endsWith("-language")) s -= 80
-                if (v.quality >= Voice.QUALITY_HIGH) s += 8
-                if (v.quality >= Voice.QUALITY_VERY_HIGH) s += 5
-                // Ưu tiên offline; nếu không có nam local thì vẫn cho phép network nam
-                if (!v.isNetworkConnectionRequired) s += 6
+                // Generic language pack thường là nữ + máy
+                if (n == "vi-vn-language" || n.endsWith("-language")) s -= 100
+                if (v.quality >= Voice.QUALITY_HIGH) s += 12
+                if (v.quality >= Voice.QUALITY_VERY_HIGH) s += 18
+                // Offline ổn định; neural mạng vẫn được nếu điểm cao hơn rõ
+                if (!v.isNetworkConnectionRequired) s += 4
                 return s
             }
 
-            val local = viAll.filter { !it.isNetworkConnectionRequired }
-            val pool = local.ifEmpty { viAll }
-            val best = pool.maxByOrNull { score(it) } ?: return
-            val bestScore = score(best)
-
-            // Nếu điểm vẫn thấp (không nhận ra nam), thử lại cả voice mạng
-            val finalVoice = if (bestScore < 40 && viAll.any { score(it) >= 40 }) {
-                viAll.maxByOrNull { score(it) } ?: best
-            } else best
+            // Ưu tiên giọng điểm cao nhất (neural mạng > pack máy local nếu chênh lệch lớn)
+            val bestLocal = viAll.filter { !it.isNetworkConnectionRequired }.maxByOrNull { score(it) }
+            val bestAny = viAll.maxByOrNull { score(it) } ?: return
+            val finalVoice = when {
+                bestLocal != null && score(bestLocal) >= score(bestAny) - 25 -> bestLocal
+                else -> bestAny
+            }
 
             engine.voice = finalVoice
             android.util.Log.i(
                 "PB_COMMENTARY",
-                "Selected voice=${finalVoice.name} score=${score(finalVoice)} locale=${finalVoice.locale}",
+                "Selected voice=${finalVoice.name} score=${score(finalVoice)} " +
+                    "net=${finalVoice.isNetworkConnectionRequired} q=${finalVoice.quality}",
             )
         } catch (e: Exception) {
             android.util.Log.w("PB_COMMENTARY", "preferWarmMaleVoice: ${e.message}")
         }
+    }
+
+    /**
+     * Tự chỉnh pitch/rate theo giọng máy có sẵn — không cần user tải thêm voice.
+     * Pack mặc định Samsung/Google (thường nữ, máy) → hạ pitch + chậm = ấm, dễ nghe trên sân.
+     */
+    private fun applyVoiceProsody(engine: TextToSpeech) {
+        val vName = engine.voice?.name?.lowercase().orEmpty()
+        val male = vName.contains("x-vid") || vName.contains("-vid-") || vName.contains("_vid_") ||
+            vName.contains("male") || Regex("""(^|[^a-z])nam([^a-z]|$)""").containsMatchIn(vName)
+        val femaleMarked = vName.contains("female") || vName.contains("fem") ||
+            vName.contains("x-vie") || vName.contains("x-vif") ||
+            vName == "vi-vn-language" || vName.endsWith("-language")
+        val neural = vName.contains("wavenet") || vName.contains("neural") ||
+            vName.contains("studio") || vName.contains("journey") || vName.contains("chirp")
+
+        limitedVoiceProfile = !male && !neural && (femaleMarked || vName.isEmpty() ||
+            (engine.voices?.count { it.locale.language.equals("vi", true) } ?: 0) <= 2)
+
+        when {
+            male && neural -> {
+                basePitch = 0.98f
+                baseRate = 1.10f
+            }
+            male -> {
+                basePitch = 0.96f
+                baseRate = 1.08f
+            }
+            limitedVoiceProfile -> {
+                // Pack mặc định: nói nhanh hơn như BLV, vẫn giữ pitch ấm
+                basePitch = 0.72f
+                baseRate = 1.12f
+            }
+            femaleMarked -> {
+                basePitch = 0.80f
+                baseRate = 1.08f
+            }
+            else -> {
+                basePitch = 0.94f
+                baseRate = 1.08f
+            }
+        }
+        try {
+            engine.setPitch(basePitch)
+            engine.setSpeechRate(baseRate)
+        } catch (_: Exception) {}
+        android.util.Log.i(
+            "PB_COMMENTARY",
+            "Prosody limited=$limitedVoiceProfile male=$male neural=$neural → pitch=$basePitch rate=$baseRate",
+        )
     }
 
     fun onMatchUpdate(match: MatchState?) {
@@ -235,20 +305,47 @@ class CommentaryEngine(private val context: Context) : TextToSpeech.OnInitListen
         }
         if (match == null) {
             val ending = currentMatch
-            if (ending != null && (ending.scoreLeft > 0 || ending.scoreRight > 0 || lastMatchKey != null)) {
+            if (ending != null && !matchEnded && (ending.scoreLeft > 0 || ending.scoreRight > 0 || lastMatchKey != null)) {
+                markMatchEnded()
                 announceMatchEnd(ending)
+            } else {
+                markMatchEnded()
             }
-            resetTracking()
             pendingMatch = null
             currentMatch = null
             stopTensionLoop()
+            resetTracking()
             return
         }
         if (!ready) {
             pendingMatch = match
             return
         }
+        rememberRules(match)
         currentMatch = match
+
+        // Trọng tài đã ấn kết thúc (status=resolved) → đọc câu kết ngay
+        if (match.status == "resolved") {
+            // Trận MỚI (khác trận đã kết thúc trước) → reset cờ để không bị chặn bởi matchEnded cũ
+            val endKey = matchKey(match)
+            if (endKey != lastMatchKey) {
+                lastMatchKey = endKey
+                matchEnded = false
+            }
+            if (!matchEnded) {
+                android.util.Log.i("PB_COMMENTARY", "status=resolved → announce match end (${match.scoreLeft}-${match.scoreRight})")
+                announceMatchEnd(match)
+            } else {
+                android.util.Log.d("PB_COMMENTARY", "status=resolved but already ended — skip")
+            }
+            return
+        }
+
+        // Đã kết thúc — bỏ qua mọi điểm/idle; chỉ giữ im lặng
+        if (matchEnded) {
+            android.util.Log.d("PB_COMMENTARY", "matchEnded — ignore score chatter ${match.scoreLeft}-${match.scoreRight}")
+            return
+        }
 
         val key = matchKey(match)
         val now = System.currentTimeMillis()
@@ -260,6 +357,7 @@ class CommentaryEngine(private val context: Context) : TextToSpeech.OnInitListen
 
         if (key != lastMatchKey) {
             lastMatchKey = key
+            matchEnded = false
             lastLeft = match.scoreLeft
             lastRight = match.scoreRight
             lastPaused = match.paused
@@ -268,6 +366,7 @@ class CommentaryEngine(private val context: Context) : TextToSpeech.OnInitListen
             lastServerHand = match.serverHand
             lastCourtSwapped = match.courtSwapped
             lastScoreChangeAt = now
+            idleStreak = 0
             pointStreak.clear()
             // Vào lại giữa trận — không đọc câu mở đầu lại từ đầu
             val midMatch = match.scoreLeft + match.scoreRight > 0
@@ -294,13 +393,26 @@ class CommentaryEngine(private val context: Context) : TextToSpeech.OnInitListen
         if (lastPaused == false && match.paused) {
             lastPaused = true
             stopTensionLoop()
-            onPausedAnnounce(match)
+            // CHỈ đọc TIMEOUT khi đúng là tạm dừng (reason=timeout).
+            // switch (đổi sân) / end (kết thúc) → không đọc.
+            val reason = match.pauseReason.trim().lowercase()
+            if (reason == "timeout" || reason.isEmpty()) {
+                speak(fillTeams(CommentaryPhrases.TIMEOUT, match), minGapMs = 1200)
+            }
             return
         }
         if (lastPaused == true && !match.paused) {
             lastPaused = false
             lastScoreChangeAt = now
-            speak(fillTeams(CommentaryPhrases.RESUME, match), minGapMs = 1200)
+            idleStreak = 0
+            if (matchEnded) {
+                matchEnded = false
+                android.util.Log.i("PB_COMMENTARY", "Resume — reopen commentary")
+            }
+            // Đọc RESUME khi tiếp tục sau timeout
+            if (!matchEnded) {
+                speak(fillTeams(CommentaryPhrases.RESUME, match), minGapMs = 1200)
+            }
             scheduleTensionLoop()
             return
         }
@@ -319,10 +431,10 @@ class CommentaryEngine(private val context: Context) : TextToSpeech.OnInitListen
             if (serveChanged) {
                 val receiver = if (match.serve == "left") "left" else "right"
                 val lost = if (match.serve == "left") "right" else "left"
-                // Đổi giao: đọc đúng người vừa nhận quyền giao (serverNum)
                 val phrase = fillPoint(CommentaryPhrases.SIDE_OUT, match, receiver, lost, MentionBias.POINT, preferServer = true)
                 syncServe(match)
                 lastScoreChangeAt = now
+                idleStreak = 0
                 speak(phrase, minGapMs = gap / 2)
                 scheduleTensionLoop()
             } else if (handChanged) {
@@ -330,6 +442,7 @@ class CommentaryEngine(private val context: Context) : TextToSpeech.OnInitListen
                 val phrase = fillPoint(CommentaryPhrases.HAND_CHANGE, match, serving, opposite(serving), MentionBias.POINT, preferServer = true)
                     .replace("{hand}", handLabel(match))
                 syncServe(match)
+                idleStreak = 0
                 speak(phrase, minGapMs = gap / 2)
                 scheduleTensionLoop()
             }
@@ -344,6 +457,7 @@ class CommentaryEngine(private val context: Context) : TextToSpeech.OnInitListen
         lastLeft = match.scoreLeft
         lastRight = match.scoreRight
         lastScoreChangeAt = now
+        idleStreak = 0
         if (scorer == null) {
             syncServe(match)
             scheduleTensionLoop()
@@ -358,62 +472,61 @@ class CommentaryEngine(private val context: Context) : TextToSpeech.OnInitListen
         val phrase = buildRichPhrase(match, scorer, serveChanged, handChanged, prevOtherStreak)
         syncServe(match)
 
-        val my = if (scorer == "left") match.scoreLeft else match.scoreRight
-        val opp = if (scorer == "left") match.scoreRight else match.scoreLeft
-        val justWon = isWinScore(match, my, opp)
-        val scorerHasGamePoint = isGamePoint(match, my, opp)
-        val dramaticClose = justWon || scorerHasGamePoint || isGamePoint(match, opp, my) || isLateGame(match)
-
-        if (justWon || scorerHasGamePoint) {
-            speak(phrase, force = true, minGapMs = 0)
-            scheduleTensionLoop()
-            return
-        }
-        if (now - lastSpeakAt < gap && !isDramatic(match, scorer, serveChanged) && !dramaticClose) return
-        if (density == Density.LOW && !isDramatic(match, scorer, serveChanged) && !dramaticClose) {
-            val total = match.scoreLeft + match.scoreRight
-            if (total % 3 != 0 && !serveChanged) return
-        }
+        // KHÔNG tự dự đoán thắng/game point — chỉ kết thúc khi trọng tài ấn (Firebase node xóa → onMatchUpdate(null))
+        val streakDramatic = (pointStreak[scorer] ?: 0) >= 3
+        // force=false: không cắt câu đang nói; pending giữ câu mới nhất
         speak(
             phrase,
-            force = serveChanged || (pointStreak[scorer] ?: 0) >= 3 || dramaticClose,
-            minGapMs = if (dramaticClose) gap / 4 else gap / 3,
+            force = streakDramatic,
+            minGapMs = when {
+                now - lastSpeakAt < gap && !isDramatic(match, scorer, serveChanged) -> gap
+                density == Density.LOW && !isDramatic(match, scorer, serveChanged) -> gap
+                else -> gap / 3
+            },
         )
         scheduleTensionLoop()
     }
 
-    /** Khi trọng tài lâu không ấn — BLV nói vui, giữ không khí (không cần tỉ số sát). */
+    /** Khi trọng tài lâu không ấn — mật độ giảm dần nếu tỉ số đứng yên lâu. */
     private fun scheduleTensionLoop() {
         stopTensionLoop()
-        if (!enabled || !ready) return
-        val interval = when (density) {
-            Density.LOW -> 16000L
-            Density.MEDIUM -> 11000L
-            Density.HIGH -> 7500L
+        if (!enabled || !ready || matchEnded) return
+        val base = when (density) {
+            Density.LOW -> 22000L
+            Density.MEDIUM -> 16000L
+            Density.HIGH -> 11000L
         }
         val r = object : Runnable {
             override fun run() {
-                if (!enabled || !ready) return
+                if (!enabled || !ready || matchEnded) return
                 val m = currentMatch ?: return
                 if (m.paused) {
-                    mainHandler.postDelayed(this, interval)
+                    mainHandler.postDelayed(this, base)
                     return
                 }
                 val idleMs = System.currentTimeMillis() - lastScoreChangeAt
-                // Lâu không có điểm / không có thao tác → luôn có gì đó vui để nói
-                if (idleMs >= interval && !speaking) {
-                    val lines = if (isLateGame(m) || hasAnyGamePoint(m)) {
-                        CommentaryPhrases.CLOSING_TENSION
+                // Backoff: càng đứng điểm càng thưa
+                val interval = when {
+                    idleMs >= 180_000L -> base * 4
+                    idleMs >= 90_000L -> base * 3
+                    idleMs >= 45_000L -> base * 2
+                    else -> base
+                }
+                if (idleMs >= interval && !speaking && pendingSpeak == null) {
+                    // Sau ~3 phút đứng yên: gần như im, chỉ thỉnh thoảng
+                    if (idleMs >= 180_000L && idleStreak >= 2) {
+                        android.util.Log.i("PB_COMMENTARY", "Idle silence (score stuck ${idleMs}ms)")
                     } else {
-                        CommentaryPhrases.idleLines()
+                        // Không dự đoán "sắp kết" theo win_score — chỉ câu lấp khoảng lặng bình thường
+                        speak(fillTeams(CommentaryPhrases.idleLines(), m), minGapMs = interval / 2)
+                        idleStreak++
                     }
-                    speak(fillTeams(lines, m), minGapMs = 2500)
                 }
                 mainHandler.postDelayed(this, interval)
             }
         }
         tensionRunnable = r
-        mainHandler.postDelayed(r, interval)
+        mainHandler.postDelayed(r, base)
     }
 
     private fun stopTensionLoop() {
@@ -502,34 +615,7 @@ class CommentaryEngine(private val context: Context) : TextToSpeech.OnInitListen
      * Trọng tài pause vì nhiều lý do — chỉ nói TIMEOUT khi đúng là tạm dừng/timeout.
      * Chạm win_score → hỏi kết thúc (pauseReason=end); nửa trận → hỏi đổi sân (switch).
      */
-    private fun onPausedAnnounce(m: MatchState) {
-        val reason = m.pauseReason.trim().lowercase()
-        val left = m.scoreLeft
-        val right = m.scoreRight
-        val won = isWinScore(m, left, right) || isWinScore(m, right, left)
-        val mid = (winTarget(m) + 1) / 2
-        val atMidSwitch = mid > 0 && maxOf(left, right) >= mid && !won && !hasAnyGamePoint(m)
-        val now = System.currentTimeMillis()
 
-        when {
-            reason == "end" || won -> {
-                // Điểm thắng vừa được đọc ở buildRichPhrase — tránh chồng thêm TIMEOUT
-                if (now - lastSpeakAt < 7000) {
-                    android.util.Log.i("PB_COMMENTARY", "Pause end skip (already spoke win/closing)")
-                    return
-                }
-                announceMatchEnd(m)
-            }
-            reason == "switch" || (reason.isEmpty() && atMidSwitch) -> {
-                android.util.Log.i("PB_COMMENTARY", "Pause switch — skip TIMEOUT")
-                // Đổi sân thật sẽ nói COURT_SWAP khi courtSwapped đổi
-            }
-            else -> {
-                // timeout / manual / không rõ
-                speak(fillTeams(CommentaryPhrases.TIMEOUT, m), minGapMs = 1200)
-            }
-        }
-    }
 
     private fun isDramatic(m: MatchState, scorer: String, sideOut: Boolean): Boolean {
         if (sideOut) return true
@@ -546,10 +632,32 @@ class CommentaryEngine(private val context: Context) : TextToSpeech.OnInitListen
         return false
     }
 
-    /** Điểm thắng theo luật giải; thiếu cấu hình thì mặc định pickleball 11. */
-    private fun winTarget(m: MatchState): Int = m.winScore.takeIf { it > 0 } ?: 11
+    private fun rememberRules(m: MatchState) {
+        if (m.winScore > 0 && m.winScore != stickyWinScore) {
+            stickyWinScore = m.winScore
+            android.util.Log.i("PB_COMMENTARY", "Rules win_score=$stickyWinScore")
+        }
+        if (m.maxScore > 0 && m.maxScore != stickyMaxScore) {
+            stickyMaxScore = m.maxScore
+            android.util.Log.i("PB_COMMENTARY", "Rules max_score=$stickyMaxScore")
+        }
+    }
 
-    private fun maxCap(m: MatchState): Int = m.maxScore.coerceAtLeast(0)
+    private fun markMatchEnded() {
+        if (!matchEnded) {
+            android.util.Log.i("PB_COMMENTARY", "matchEnded=true — stop chatter")
+        }
+        matchEnded = true
+        stopTensionLoop()
+        // Xóa pending idle/điểm thường — giữ lại nếu đang là câu thắng (pending sẽ nói sau)
+    }
+
+    /** Điểm thắng theo luật giải; nhớ sticky từ Firebase; thiếu thì mặc định 11. */
+    private fun winTarget(m: MatchState): Int =
+        m.winScore.takeIf { it > 0 } ?: stickyWinScore.takeIf { it > 0 } ?: 11
+
+    private fun maxCap(m: MatchState): Int =
+        m.maxScore.takeIf { it > 0 } ?: stickyMaxScore.coerceAtLeast(0)
 
     private fun lateThreshold(m: MatchState): Int {
         val t = winTarget(m)
@@ -585,24 +693,25 @@ class CommentaryEngine(private val context: Context) : TextToSpeech.OnInitListen
         maxOf(m.scoreLeft, m.scoreRight) >= lateThreshold(m) || isExtended(m) || hasAnyGamePoint(m)
 
     private fun announceMatchEnd(m: MatchState) {
-        val now = System.currentTimeMillis()
-        // Vừa nói điểm thắng / game point — tránh chồng câu kết thúc
-        if (now - lastSpeakAt < 7000) {
-            android.util.Log.i("PB_COMMENTARY", "Match end skip (just spoke ${now - lastSpeakAt}ms ago)")
-            return
-        }
+        markMatchEnded()
+        // Câu kết là quan trọng nhất — CẮT NGANG câu đang nói để đọc ngay,
+        // không defer (node resolved chỉ tồn tại ~12s, defer dễ mất câu kết).
+        // endPhrase=true → luôn nói dù không khớp isEndPhrase (tránh bị guard chống-chatter chặn).
+        pendingSpeak = null
+        speak(buildMatchEndText(m), force = true, minGapMs = 0, interrupt = true, endPhrase = true)
+    }
+
+    private fun buildMatchEndText(m: MatchState): String {
+        // Tại thời điểm kết thúc, tỉ số đã là kết quả cuối → bên cao điểm hơn là bên thắng.
+        // Không dùng isWinScore (win_score không tin cậy) — chỉ so sánh trực tiếp.
         val left = m.scoreLeft
         val right = m.scoreRight
-        val text = when {
-            isWinScore(m, left, right) ->
-                fillPoint(CommentaryPhrases.MATCH_WON, m, "left", "right", MentionBias.BIG)
-            isWinScore(m, right, left) ->
-                fillPoint(CommentaryPhrases.MATCH_WON, m, "right", "left", MentionBias.BIG)
-            else ->
-                fillTeams(CommentaryPhrases.MATCH_END, m, varyNames = false)
+        // finalScore=true → chỉ đọc tỉ số chính x-y, bỏ số người giao (z)
+        return when {
+            left > right -> fillPoint(CommentaryPhrases.MATCH_WON, m, "left", "right", MentionBias.BIG, finalScore = true)
+            right > left -> fillPoint(CommentaryPhrases.MATCH_WON, m, "right", "left", MentionBias.BIG, finalScore = true)
+            else -> fillTeams(CommentaryPhrases.MATCH_END, m, varyNames = false, finalScore = true)
         }
-        android.util.Log.i("PB_COMMENTARY", "Match end announce: $left-$right → ${text.take(80)}")
-        speak(text, force = true, minGapMs = 0)
     }
 
     private fun buildRichPhrase(
@@ -619,35 +728,15 @@ class CommentaryEngine(private val context: Context) : TextToSpeech.OnInitListen
         val servingSide = m.serve
         val otherSide = opposite(scorer)
 
+        // KHÔNG dùng isWinScore/isGamePoint (win_score không tin cậy) — chỉ bình luận điểm bình thường.
+        // Câu kết chỉ đọc khi trọng tài ấn kết thúc (Firebase node xóa → onMatchUpdate null).
         val bias = when {
-            isWinScore(m, my, opp) -> MentionBias.BIG
-            isGamePoint(m, my, opp) -> MentionBias.BIG
             streak >= 3 -> MentionBias.STREAK
             else -> MentionBias.POINT
         }
         // Giữ giao / vừa ghi điểm khi đang giao → ưu tiên đúng người giao
         val preferServer = scorer == servingSide || sideOut || handChanged
         val (name, other) = resolvePointNames(m, scorer, otherSide, bias, preferServer)
-
-        // Ưu tiên tuyệt đối: vừa thắng / đang có game point
-        if (isWinScore(m, my, opp)) {
-            val wonPool = mutableListOf<String>()
-            wonPool.addAll(applyPoint(CommentaryPhrases.MATCH_WON, name, other, scoreCall, m))
-            if (maxCap(m) > 0 && my >= maxCap(m)) {
-                wonPool.addAll(applyPoint(CommentaryPhrases.MAX_SCORE_WIN, name, other, scoreCall, m))
-            }
-            return pickFrom(wonPool)
-        }
-        if (isGamePoint(m, my, opp)) {
-            val gp = mutableListOf<String>()
-            gp.addAll(applyPoint(CommentaryPhrases.GAME_POINT, name, other, scoreCall, m))
-            gp.addAll(applyPoint(CommentaryPhrases.MATCH_POINTISH, name, other, scoreCall, m))
-            gp.addAll(applyPoint(CommentaryPhrases.CLUTCH, name, other, scoreCall, m))
-            if (maxCap(m) > 0 && my + 1 >= maxCap(m)) {
-                gp.addAll(applyPoint(CommentaryPhrases.NEAR_MAX, name, other, scoreCall, m))
-            }
-            return pickFrom(gp)
-        }
 
         val pool = mutableListOf<String>()
 
@@ -708,22 +797,8 @@ class CommentaryEngine(private val context: Context) : TextToSpeech.OnInitListen
         if (abs(my - opp) >= 4 && my > opp) {
             pool.addAll(applyPoint(CommentaryPhrases.DOMINATE, name, other, scoreCall, m))
         }
-        val late = lateThreshold(m)
-        if (maxOf(my, opp) >= late && abs(my - opp) <= 2) {
-            pool.addAll(applyPoint(CommentaryPhrases.CLUTCH, name, other, scoreCall, m))
-        }
-        if (maxOf(my, opp) >= late + 1 && abs(my - opp) <= 1) {
-            pool.addAll(applyPoint(CommentaryPhrases.MATCH_POINTISH, name, other, scoreCall, m))
-        }
-        if (isExtended(m)) {
-            pool.addAll(applyPoint(CommentaryPhrases.EXTENDED_WIN_BY_TWO, name, other, scoreCall, m))
-        }
-        // Đối phương đang có game point mà mình vừa ghi điểm (cứu nguy)
-        if (isGamePoint(m, opp, my)) {
-            pool.addAll(applyPoint(CommentaryPhrases.CLUTCH, name, other, scoreCall, m))
-            pool.addAll(applyPoint(CommentaryPhrases.COMEBACK, name, other, scoreCall, m))
-            pool.addAll(applyPoint(CommentaryPhrases.HYPE, name, other, scoreCall, m))
-        }
+        // KHÔNG dùng câu game point / clutch / extended / match point theo win_score
+        // (win_score không tin cậy → tránh bình luận "sắp thắng" sai ở điểm 11)
         if (my + opp <= 2) {
             pool.addAll(applyPoint(CommentaryPhrases.ZERO_ZERO, name, other, scoreCall, m))
         }
@@ -850,16 +925,16 @@ class CommentaryEngine(private val context: Context) : TextToSpeech.OnInitListen
         return filtered.last().first
     }
 
-    /** Người đang giao đúng theo serverNum / serverHand (1 hoặc 2). */
+    /**
+     * Người đang giao — khớp logic referee: serverIsHand1=true → hand1 (players[0]), ngược lại hand2.
+     * players = [hand1, hand2] (từ playersOf).
+     */
     private fun servingPlayer(m: MatchState, side: String, players: List<String>): String {
         if (players.isEmpty()) return "đội này"
         if (players.size == 1) return players.first()
-        val idx = when {
-            m.serve == side && m.serverNum in 1..players.size -> m.serverNum - 1
-            m.serve == side && m.serverHand in 1..players.size -> m.serverHand - 1
-            m.serve == side -> 0
-            else -> Random.nextInt(players.size)
-        }
+        // Chỉ biết chắc người giao khi đội này đang giao
+        if (m.serve != side) return players.first()
+        val idx = if (m.serverIsHand1) 0 else 1
         return players[idx.coerceIn(0, players.lastIndex)]
     }
 
@@ -926,7 +1001,12 @@ class CommentaryEngine(private val context: Context) : TextToSpeech.OnInitListen
         }
     }
 
-    private fun fillTeams(templates: List<String>, m: MatchState, varyNames: Boolean = true): String {
+    private fun fillTeams(
+        templates: List<String>,
+        m: MatchState,
+        varyNames: Boolean = true,
+        finalScore: Boolean = false,
+    ): String {
         val left = if (varyNames) mentionSide(m, "left", m.left) else fullName(m.left)
         val right = if (varyNames) mentionSide(m, "right", m.right) else fullName(m.right)
         val target = vnNumber(winTarget(m))
@@ -936,7 +1016,7 @@ class CommentaryEngine(private val context: Context) : TextToSpeech.OnInitListen
                 .replace("{right}", right)
                 .replace("{tour}", m.tournamentName?.trim()?.takeIf { t -> t.isNotEmpty() } ?: "giải đấu")
                 .replace("{round}", m.roundName?.trim()?.takeIf { t -> t.isNotEmpty() } ?: "trận đấu")
-                .replace("{score}", scoreCall(m))
+                .replace("{score}", scoreCall(m, finalScore))
                 .replace("{target}", target)
                 .replace("{max}", max)
         }
@@ -950,12 +1030,23 @@ class CommentaryEngine(private val context: Context) : TextToSpeech.OnInitListen
         otherSide: String,
         bias: MentionBias = MentionBias.POINT,
         preferServer: Boolean = false,
+        finalScore: Boolean = false,
     ): String {
         val (name, other) = resolvePointNames(m, scorer, otherSide, bias, preferServer)
-        return pickFrom(applyPoint(templates, name, other, scoreCall(m), m))
+        return pickFrom(applyPoint(templates, name, other, scoreCall(m, finalScore), m))
     }
 
-    private fun scoreCall(m: MatchState): String {
+    /**
+     * Chuỗi tỉ số đọc TTS.
+     * finalScore=true (khi trận kết thúc) → chỉ đọc tỉ số chính x-y, KHÔNG đọc số người giao (z).
+     */
+    private fun scoreCall(m: MatchState, finalScore: Boolean = false): String {
+        if (finalScore) {
+            // Kết thúc: đọc theo bên thắng trước (điểm cao hơn), chỉ tỉ số chính, không có z
+            val hi = maxOf(m.scoreLeft, m.scoreRight)
+            val lo = minOf(m.scoreLeft, m.scoreRight)
+            return "${vnNumber(hi)} ${vnNumber(lo)}"
+        }
         val s = if (m.serve == "left") m.scoreLeft else m.scoreRight
         val r = if (m.serve == "left") m.scoreRight else m.scoreLeft
         return if (m.matchFormat == "singles") {
@@ -979,6 +1070,10 @@ class CommentaryEngine(private val context: Context) : TextToSpeech.OnInitListen
         lastCourtSwapped = null
         lastNameStyle = ""
         lastOtherStyle = ""
+        matchEnded = false
+        idleStreak = 0
+        pendingSpeak = null
+        mainHandler.removeCallbacks(pendingFlushRunnable)
         pointStreak.clear()
         stopTensionLoop()
     }
@@ -995,47 +1090,219 @@ class CommentaryEngine(private val context: Context) : TextToSpeech.OnInitListen
         return chosen
     }
 
-    private fun speak(text: String, force: Boolean = false, minGapMs: Long = 2500) {
+    /**
+     * Nói TTS: không cắt câu đang nói.
+     * Nếu đang nói / trong gap → ghi đè pending bằng câu mới nhất; nói xong mới phát.
+     * force chỉ bỏ qua minGap (ưu tiên win/game point), vẫn không QUEUE_FLUSH giữa câu.
+     */
+    private fun speak(text: String, force: Boolean = false, minGapMs: Long = 2500, interrupt: Boolean = false, endPhrase: Boolean = false) {
         if (!enabled || !ready || text.isBlank()) return
+        // endPhrase = câu kết chính thức → luôn nói, bỏ qua guard chống-chatter
+        if (!endPhrase && matchEnded && !isEndPhrase(text)) {
+            android.util.Log.d("PB_COMMENTARY", "Drop post-end chatter: ${text.take(48)}")
+            return
+        }
         val now = System.currentTimeMillis()
-        if (!force && speaking) return
-        if (!force && now - lastSpeakAt < minGapMs) return
-        lastSpeakAt = now
+        // interrupt = câu kết → cắt ngang câu đang nói, phát ngay (QUEUE_FLUSH trong startUtterance)
+        if (interrupt) {
+            pendingSpeak = null
+            mainHandler.removeCallbacks(pendingFlushRunnable)
+            startUtterance(text)
+            return
+        }
+        if (speaking) {
+            pendingSpeak = text
+            android.util.Log.d("PB_COMMENTARY", "Queue latest (speaking): ${text.take(60)}")
+            return
+        }
+        if (!force && now - lastSpeakAt < minGapMs) {
+            pendingSpeak = text
+            val wait = (minGapMs - (now - lastSpeakAt)).coerceAtLeast(80L)
+            mainHandler.removeCallbacks(pendingFlushRunnable)
+            mainHandler.postDelayed(pendingFlushRunnable, wait)
+            return
+        }
+        startUtterance(text)
+    }
+
+    private fun isEndPhrase(text: String): Boolean {
+        val t = text.lowercase()
+        return t.contains("thắng") || t.contains("kết thúc") || t.contains("khép") ||
+            t.contains("chiến thắng") || t.contains("hết trận") || t.contains("chúc mừng") ||
+            t.contains("hết giờ") || t.contains("đóng màn") || t.contains("xong rồi")
+    }
+
+    private fun flushPendingSpeak() {
+        if (speaking) return
+        val next = pendingSpeak ?: return
+        pendingSpeak = null
+        if (!enabled || !ready) return
+        if (matchEnded && !isEndPhrase(next)) return
+        startUtterance(next)
+    }
+
+    private fun startUtterance(text: String) {
+        val spoken = humanizeForTts(text)
+        if (spoken.isBlank()) return
+        lastSpeakAt = System.currentTimeMillis()
         requestFocus()
         val engine = tts ?: return
+        // Pack mặc định: dao động rất nhẹ (dao động mạnh càng nghe máy)
+        val (pitch, rate) = if (limitedVoiceProfile) {
+            val p = (basePitch + Random.nextFloat() * 0.03f - 0.01f).coerceIn(0.68f, 0.78f)
+            val r = (baseRate + Random.nextFloat() * 0.06f - 0.02f).coerceIn(1.05f, 1.20f)
+            p to r
+        } else {
+            val p = (basePitch + Random.nextFloat() * 0.05f - 0.02f).coerceIn(0.88f, 1.05f)
+            val r = (baseRate + Random.nextFloat() * 0.06f - 0.02f).coerceIn(1.02f, 1.18f)
+            p to r
+        }
+        try {
+            engine.setPitch(pitch)
+            engine.setSpeechRate(rate)
+        } catch (_: Exception) {}
         val id = UUID.randomUUID().toString()
         val run = Runnable {
             try {
                 try {
                     val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
                     val cur = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-                    if (max > 0 && cur == 0) {
-                        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (max * 0.45f).toInt().coerceAtLeast(1), 0)
+                    if (max > 0) {
+                        val target = (max * 0.85f).toInt().coerceAtLeast(1)
+                        if (cur < target) {
+                            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0)
+                        }
                     }
                 } catch (_: Exception) {}
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                     val params = Bundle()
                     params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
-                    engine.speak(text, TextToSpeech.QUEUE_FLUSH, params, id)
+                    params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
+                    engine.speak(spoken, TextToSpeech.QUEUE_FLUSH, params, id)
                 } else {
                     @Suppress("DEPRECATION")
                     engine.speak(
-                        text,
+                        spoken,
                         TextToSpeech.QUEUE_FLUSH,
                         hashMapOf(
                             TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID to id,
                             TextToSpeech.Engine.KEY_PARAM_STREAM to AudioManager.STREAM_MUSIC.toString(),
+                            TextToSpeech.Engine.KEY_PARAM_VOLUME to "1.0",
                         ),
                     )
                 }
-                android.util.Log.i("PB_COMMENTARY", "Speak: $text")
+                android.util.Log.i("PB_COMMENTARY", "Speak(p=$pitch r=$rate): $spoken")
             } catch (e: Exception) {
                 android.util.Log.w("PB_COMMENTARY", "speak failed: ${e.message}")
                 speaking = false
                 abandonFocus()
+                flushPendingSpeak()
             }
         }
         if (Looper.myLooper() == Looper.getMainLooper()) run.run() else mainHandler.post(run)
+    }
+
+    /**
+     * Làm mềm câu trước TTS: bỏ mở đầu máy móc, thêm nhịp nghỉ tự nhiên.
+     */
+    private fun humanizeForTts(raw: String): String {
+        var t = raw.trim()
+        if (t.isEmpty()) return t
+        // Bỏ các opener kiểu script expand dễ nghe robot
+        val stiffOpeners = listOf(
+            "Thật vậy, ", "Nhìn xem, ", "Đúng lúc này, ", "Trên sân lúc này, ", "Xin nhắc lại, ",
+            "Một diễn biến mới, ", "Cập nhật nhanh, ", "Theo dõi tiếp, ", "Không khí đang đổi, ",
+            "Vừa rồi, ", "Lúc này quý vị, ", "Đáng chú ý, ", "Xin hãy lắng nghe, ", "Phút giây này, ",
+            "Diễn biến nóng, ", "Trực tiếp từ sân, ", "Bình luận viên xin phép, ", "Góc nhìn nhanh, ",
+            "Nhìn này, ", "Xin phép, ", "Đúng rồi, ", "Thật đáng xem, ", "Giữ mắt trên sân, ",
+            "Không khí vừa nhảy một nấc, ", "Loa bình luận xin phép nóng, ", "Một nhịp nữa, ",
+            "Cảm xúc đang cao, ", "Đúng chất giải đấu, ", "Vâng, ", "Ôi giời, ", "Xin giữ chỗ ngồi, ",
+            "Một khoảnh khắc đáng tiền, ", "Trời đất ơi, ", "Nghe này quý vị, ",
+            "Sân đang rất đáng theo dõi, ", "Bản lĩnh lên tiếng, ", "Nhanh thôi, ",
+            "Úi giời, ",
+        )
+        for (op in stiffOpeners) {
+            if (t.startsWith(op, ignoreCase = true)) {
+                t = t.substring(op.length).trimStart()
+                if (t.isNotEmpty()) t = t.replaceFirstChar { c -> if (c.isLowerCase()) c.titlecase(Locale("vi", "VN")) else c.toString() }
+                break
+            }
+        }
+        // Rút đuôi máy lặp lại
+        val stiffTails = listOf(
+            " Xin giữ tinh thần cổ vũ đến cùng.",
+            " Đừng chỉnh kênh nhé quý vị.",
+            " Cảm xúc sân đang rất đáng theo dõi.",
+            " Bản lĩnh sẽ lên tiếng ngay thôi.",
+            " Hãy cùng thở chung một nhịp với sân.",
+            " Đây mới là chất lượng trận đấu.",
+            " Khán đài đang nóng dần từng giây.",
+            " Loa bình luận cũng muốn nói to hơn.",
+            " Một pha nữa có thể đổi cả cục diện.",
+            " Xin vỗ tay tiếp sức cho cả hai phía.",
+            " Trận đấu vẫn còn rất nhiều chuyện để kể.",
+            " Đừng bỏ lỡ giây nào lúc này.",
+            " Áp lực và niềm vui đang trộn đều trên sân.",
+            " Tinh thần thể thao đang lên tiếng đẹp mắt.",
+            " Quá đáng xem quý vị ạ.",
+            " Hãy ở lại đến phút cuối nhé.",
+            " Tim khán đài cũng đập theo từng nhịp.",
+            " Câu chuyện trên sân vẫn chưa dừng lại.",
+            " Phong độ lúc này rất đáng ghi nhận.",
+            " Xin cảm ơn không khí tuyệt đẹp trên sân.",
+            " Hãy cùng dõi theo tiếp.",
+            " Không khí vẫn rất đáng xem.",
+            " Xin giữ tinh thần cổ vũ văn minh.",
+            " Bản lĩnh sẽ quyết định đoạn tới.",
+            " Cảm xúc sân còn rất cao.",
+            " Đừng bỏ lỡ những pha tiếp theo.",
+            " Trận đấu vẫn còn nhiều bất ngờ.",
+            " Loa bình luận cũng đang nóng theo.",
+            " Khán đài đang rất tập trung.",
+            " Một nhịp nữa sẽ rõ hơn.",
+        )
+        for (tail in stiffTails) {
+            if (t.endsWith(tail)) {
+                t = t.removeSuffix(tail).trimEnd()
+                if (t.isNotEmpty() && t.last() !in ".!?…") t += "."
+                break
+            }
+        }
+        // Nghỉ hơi tự nhiên quanh dấu câu / tỉ số
+        t = t
+            .replace(Regex("""\s{2,}"""), " ")
+            .replace("..", ".")
+            .replace(" ,", ",")
+            .replace(Regex("""([^\s]),([^\s])"""), "$1, $2")
+        // Chèn nghỉ nhẹ trước cụm điểm kiểu "mười một mười" nếu câu dài
+        if (t.length > 90 && t.count { it == ',' } < 2) {
+            val mid = t.indexOf(". ")
+            if (mid in 20 until t.length - 20) {
+                // đã có ngắt câu
+            } else {
+                val cut = t.indexOf(", ", t.length / 3)
+                if (cut < 0) {
+                    val sp = t.indexOf(' ', t.length / 2)
+                    if (sp > 0) t = t.substring(0, sp) + "," + t.substring(sp)
+                }
+            }
+        }
+        // Pack mặc định: câu ngắn hơn nghe tự nhiên hơn (TTS yếu hay “đọc sách”)
+        if (limitedVoiceProfile && t.length > 110) {
+            t = shortenForLimitedTts(t, 110)
+        }
+        return t.trim()
+    }
+
+    private fun shortenForLimitedTts(text: String, maxLen: Int): String {
+        if (text.length <= maxLen) return text
+        val cutDots = text.lastIndexOf(". ", maxLen)
+        if (cutDots >= 40) return text.substring(0, cutDots + 1).trim()
+        val cutComma = text.lastIndexOf(", ", maxLen)
+        if (cutComma >= 40) return text.substring(0, cutComma).trim() + "."
+        val sp = text.lastIndexOf(' ', maxLen)
+        if (sp >= 40) return text.substring(0, sp).trim() + "."
+        return text.substring(0, maxLen).trim() + "."
     }
 
     private fun requestFocus() {
@@ -1044,7 +1311,7 @@ class CommentaryEngine(private val context: Context) : TextToSpeech.OnInitListen
                 val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
                     .setAudioAttributes(
                         AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
                             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                             .build()
                     )

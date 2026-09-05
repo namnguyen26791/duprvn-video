@@ -16,6 +16,8 @@ data class MatchState(
     val serve: String = "left",
     val serverNum: Int = 2,
     val serverHand: Int = 1,
+    /** true = người giao là hand1, false = hand2 (referee ghi field serverIsHand1). */
+    val serverIsHand1: Boolean = true,
     val courtSwapped: Boolean = false,
     val matchFormat: String = "doubles",
     val court: String? = null,
