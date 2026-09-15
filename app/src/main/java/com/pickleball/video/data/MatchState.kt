@@ -20,6 +20,8 @@ data class MatchState(
     val serverIsHand1: Boolean = true,
     val courtSwapped: Boolean = false,
     val matchFormat: String = "doubles",
+    /** 'side_out' | 'rally' — rally không đọc số người giao (z). */
+    val scoringType: String = "side_out",
     val court: String? = null,
     val tournamentId: Int? = null,
     val tournamentName: String? = null,

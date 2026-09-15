@@ -303,15 +303,19 @@ object ScoreboardOverlay {
         canvas.drawLine(scoreColLeft, contentTop, scoreColLeft, contentBottom, gridP)
         canvas.drawLine(contentX, rowMidY, boxX + boxW, rowMidY, gridP)
 
+        // Rally scoring: 1 lượt giao/đội → không vẽ chấm bóng thứ 2 (coi như singles về mặt hiển thị server)
+        val hideSecondServer = isSingles || match.scoringType == "rally"
         drawTeamRow(canvas, contentX, contentTop, scoreColLeft, boxX + boxW, rowH, pad, s,
-            row1Name, match.scoreLeft, row1Serving, match.serverNum, isSingles)
+            row1Name, match.scoreLeft, row1Serving, match.serverNum, hideSecondServer)
         drawTeamRow(canvas, contentX, rowMidY, scoreColLeft, boxX + boxW, rowH, pad, s,
-            row2Name, match.scoreRight, row2Serving, match.serverNum, isSingles)
+            row2Name, match.scoreRight, row2Serving, match.serverNum, hideSecondServer)
 
         // Pickleball score notation (góc dưới scoreboard)
         val sScore = if (row1Serving) match.scoreLeft else match.scoreRight
         val rScore = if (row1Serving) match.scoreRight else match.scoreLeft
-        val notation = if (isSingles) "$sScore – $rScore" else "$sScore – $rScore – ${match.serverNum}"
+        // Rally scoring / đơn → không hiện số người giao (z)
+        val hideServerNum = isSingles || match.scoringType == "rally"
+        val notation = if (hideServerNum) "$sScore – $rScore" else "$sScore – $rScore – ${match.serverNum}"
         val noteP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = COLOR_TEXT_DIM
             textSize = 10.5f * s

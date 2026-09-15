@@ -93,8 +93,9 @@ fun VideoApp() {
     suspend fun fetchTournaments(page: Int, query: String, append: Boolean) {
         val q = query.trim().ifBlank { null }
         val res = ApiService.create(apiBase).getTournaments(
-            // Có từ khóa → không gửi active (tránh chỉ lọc giải đang hiện trên list)
-            active = if (q == null) 1 else null,
+            // List mặc định: chỉ giải đã gắn kênh YouTube.
+            // Có từ khóa → bỏ filter để vẫn tìm được giải chưa gắn kênh.
+            withChannel = if (q == null) 1 else null,
             page = page,
             perPage = 20,
             query = q,
@@ -378,7 +379,7 @@ fun VideoApp() {
                         )
                         if (tournaments.isEmpty() && !loading) {
                             Text(
-                                if (tournamentSearch.isBlank()) "Không có giải đang diễn ra"
+                                if (tournamentSearch.isBlank()) "Không có giải đã gắn kênh"
                                 else "Không khớp \"$tournamentSearch\"",
                                 color = Color.Gray,
                                 fontSize = 13.sp,

@@ -99,7 +99,9 @@ data class OverlayLogo(
 interface ApiService {
     @GET("public/tournaments")
     suspend fun getTournaments(
-        @Query("active") active: Int? = 1,
+        @Query("active") active: Int? = null,
+        /** 1 = chỉ giải đã gắn kênh YouTube (tournament_court_channels). */
+        @Query("with_channel") withChannel: Int? = null,
         @Query("page") page: Int = 1,
         @Query("per_page") perPage: Int = 20,
         @Query("q") query: String? = null,

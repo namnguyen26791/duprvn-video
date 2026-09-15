@@ -128,6 +128,7 @@ object FirebaseMatchListener {
             serverIsHand1 = snap.child("serverIsHand1").getValue(Boolean::class.java) ?: true,
             courtSwapped = snap.child("courtSwapped").getValue(Boolean::class.java) ?: false,
             matchFormat = snap.child("matchFormat").getValue(String::class.java) ?: "doubles",
+            scoringType = snap.child("scoringType").getValue(String::class.java) ?: "side_out",
             court = snap.child("court").getValue(String::class.java),
             tournamentName = snap.child("tournamentName").getValue(String::class.java),
             roundName = snap.child("roundName").getValue(String::class.java),

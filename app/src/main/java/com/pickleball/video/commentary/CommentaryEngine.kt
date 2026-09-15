@@ -1049,7 +1049,8 @@ class CommentaryEngine(private val context: Context) : TextToSpeech.OnInitListen
         }
         val s = if (m.serve == "left") m.scoreLeft else m.scoreRight
         val r = if (m.serve == "left") m.scoreRight else m.scoreLeft
-        return if (m.matchFormat == "singles") {
+        // Rally scoring hoặc đơn → không đọc số người giao (z)
+        return if (m.matchFormat == "singles" || m.scoringType == "rally") {
             "${vnNumber(s)} ${vnNumber(r)}"
         } else {
             "${vnNumber(s)} ${vnNumber(r)} ${vnNumber(m.serverNum.coerceIn(1, 2))}"
