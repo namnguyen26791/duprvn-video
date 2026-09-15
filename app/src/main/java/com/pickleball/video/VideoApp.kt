@@ -93,8 +93,9 @@ fun VideoApp() {
     suspend fun fetchTournaments(page: Int, query: String, append: Boolean) {
         val q = query.trim().ifBlank { null }
         val res = ApiService.create(apiBase).getTournaments(
-            // List mặc định: chỉ giải đã gắn kênh YouTube.
-            // Có từ khóa → bỏ filter để vẫn tìm được giải chưa gắn kênh.
+            // Bản cũ: active=1 | bản mới: with_channel=1 — backend gộp cả 2 (kênh + ±3 ngày).
+            // Có từ khóa → bỏ filter để vẫn tìm được giải chưa gắn kênh / ngoài cửa sổ ngày.
+            active = if (q == null) 1 else null,
             withChannel = if (q == null) 1 else null,
             page = page,
             perPage = 20,
