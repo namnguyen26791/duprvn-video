@@ -18,19 +18,21 @@ object FirebaseMatchListener {
 
         val listener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
-                if (snapshot.exists()) {
-                    val status = snapshot.child("status").getValue(String::class.java) ?: ""
-                    when (status) {
-                        "playing", "paused" -> trySend(parseMatch(snapshot))
-                        "resolved" -> {
-                            // Trọng tài đã ấn kết thúc — emit match với status=resolved
-                            // để commentary đọc câu kết trước khi stream finish
-                            trySend(parseMatch(snapshot).copy(status = "resolved"))
-                        }
-                        else -> trySend(null)
-                    }
-                } else {
+                if (!snapshot.exists()) {
                     trySend(null)
+                    return
+                }
+                val status = snapshot.child("status").getValue(String::class.java) ?: ""
+                val parsed = parseMatch(snapshot)
+                when (status) {
+                    "playing", "paused" -> trySend(parsed)
+                    "resolved" -> trySend(parsed.copy(status = "resolved"))
+                    else -> {
+                        // Snapshot giữa lần ghi điểm (máy yếu) — đừng emit null nếu còn tên đội
+                        val hasTeams = parsed.left.teamName.isNotBlank() || parsed.right.teamName.isNotBlank()
+                        android.util.Log.w("PB_OVERLAY", "Firebase status='$status' hasTeams=$hasTeams — keep parse")
+                        if (hasTeams) trySend(parsed) else trySend(null)
+                    }
                 }
             }
             override fun onCancelled(e: DatabaseError) {}

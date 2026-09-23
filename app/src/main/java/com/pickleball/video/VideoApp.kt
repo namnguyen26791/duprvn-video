@@ -28,11 +28,34 @@ import vn.vdpr.video.data.*
 import vn.vdpr.video.stream.CameraInfo
 import vn.vdpr.video.stream.StreamManager
 import vn.vdpr.video.stream.StreamQuality
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 
 private fun loadBitmapFromUrl(imageUrl: String, maxEdge: Int = vn.vdpr.video.overlay.BitmapUtils.MAX_LOGO_EDGE): android.graphics.Bitmap? {
     return vn.vdpr.video.overlay.BitmapUtils.loadUrl(imageUrl, maxEdge)
+}
+
+/** Không hiện chữ CoroutineScope / cancelled khi mạng chết hoặc scope bị hủy. */
+private fun friendlyNetworkError(e: Throwable): String {
+    val cause = generateSequence(e) { it.cause }.firstOrNull { c ->
+        c is UnknownHostException || c is ConnectException || c is SocketTimeoutException
+    }
+    val msg = (cause ?: e).message.orEmpty()
+    return when {
+        cause != null ||
+            msg.contains("Unable to resolve host", ignoreCase = true) ||
+            msg.contains("failed to connect", ignoreCase = true) ||
+            msg.contains("timeout", ignoreCase = true) ||
+            msg.contains("Network is unreachable", ignoreCase = true) ||
+            msg.contains("cancelled", ignoreCase = true) ||
+            msg.contains("Coroutine", ignoreCase = true) ->
+            "Mất kết nối mạng. Kiểm tra Wi‑Fi/4G rồi thử lại."
+        else -> e.message?.takeIf { it.isNotBlank() } ?: "Lỗi không xác định"
+    }
 }
 
 @Composable
@@ -55,7 +78,7 @@ fun VideoApp() {
     }
 
     var apiBase by remember { mutableStateOf(BuildConfig.API_BASE) }
-    var step by remember { mutableIntStateOf(prefs.getInt("step", 0)) }
+    var step by remember { mutableIntStateOf(0) }
     var tournaments by remember { mutableStateOf<List<TournamentListItem>>(emptyList()) }
     var tournamentSearch by remember { mutableStateOf("") }
     var tournamentPage by remember { mutableIntStateOf(0) }
@@ -63,27 +86,15 @@ fun VideoApp() {
     var tournamentTotal by remember { mutableIntStateOf(0) }
     var tournamentsLoadingMore by remember { mutableStateOf(false) }
     var selectedTournament by remember { mutableStateOf<TournamentListItem?>(null) }
-    var selectedTournaments by remember { mutableStateOf(prefs.getStringSet("tids", emptySet())?.mapNotNull { it.toIntOrNull() }?.toSet() ?: emptySet()) }
-    var selectedTournamentNames by remember {
-        mutableStateOf(
-            prefs.getString("tid_names", "")
-                ?.split("\n")
-                ?.mapNotNull { line ->
-                    val i = line.indexOf('=')
-                    if (i <= 0) null
-                    else line.substring(0, i).toIntOrNull()?.let { id -> id to line.substring(i + 1) }
-                }
-                ?.toMap()
-                ?: emptyMap()
-        )
-    }
+    var selectedTournaments by remember { mutableStateOf(emptySet<Int>()) }
+    var selectedTournamentNames by remember { mutableStateOf(emptyMap<Int, String>()) }
     var streamConfig by remember { mutableStateOf<StreamConfigResponse?>(null) }
-    var selectedCourt by remember { mutableStateOf(prefs.getString("court", null)) }
+    var selectedCourt by remember { mutableStateOf<String?>(null) }
     var courtMatches by remember { mutableStateOf<List<CourtMatchItem>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     // Persist để tránh vòng lặp: StreamActivity đóng → MainActivity recreate → autoLaunched=null → vào lại → finish...
-    var autoLaunched by remember { mutableStateOf(prefs.getString("auto_launched", null)) }
+    var autoLaunched by remember { mutableStateOf<String?>(null) }
     fun setAutoLaunched(key: String?) {
         autoLaunched = key
         prefs.edit().putString("auto_launched", key).apply()
@@ -111,11 +122,44 @@ fun VideoApp() {
         tournamentTotal = res.total
     }
 
-    // Persist step/court/tournaments
-    LaunchedEffect(step, selectedCourt, selectedTournaments, selectedTournamentNames) {
+    fun tournamentLabel(id: Int): String =
+        selectedTournamentNames[id]
+            ?: tournaments.find { it.id == id }?.name
+            ?: "Giải #$id"
+
+    // Camera selection
+    var backCameras by remember { mutableStateOf<List<CameraInfo>>(emptyList()) }
+    var selectedCameraId by remember { mutableStateOf(prefs.getString("camera_id", "0") ?: "0") }
+    var selectedQuality by remember {
+        mutableStateOf(
+            prefs.getString("quality", null)?.let {
+                try { StreamQuality.valueOf(it) } catch (_: Exception) { null }
+            } ?: StreamQuality.Q_720P
+        )
+    }
+    var supportedQualities by remember { mutableStateOf<List<StreamQuality>>(emptyList()) }
+
+    LaunchedEffect(Unit) {
+        backCameras = StreamManager.getBackCameras(context)
+        val savedCam = prefs.getString("camera_id", null)
+        if (backCameras.isNotEmpty()) {
+            selectedCameraId = savedCam?.takeIf { id -> backCameras.any { it.id == id } }
+                ?: backCameras.first().id
+        }
+        supportedQualities = StreamQuality.getSupportedQualities(context)
+        val savedQ = prefs.getString("quality", null)?.let {
+            try { StreamQuality.valueOf(it) } catch (_: Exception) { null }
+        }
+        selectedQuality = savedQ?.takeIf { supportedQualities.contains(it) }
+            ?: StreamQuality.preferredDefault(supportedQualities)
+    }
+
+    LaunchedEffect(step, selectedCourt, selectedTournaments, selectedTournamentNames, selectedQuality, selectedCameraId) {
         prefs.edit()
-            .putInt("step", step)
+            .putInt("step", 0)
             .putString("court", selectedCourt)
+            .putString("quality", selectedQuality.name)
+            .putString("camera_id", selectedCameraId)
             .putStringSet("tids", selectedTournaments.map { it.toString() }.toSet())
             .putString(
                 "tid_names",
@@ -124,24 +168,6 @@ fun VideoApp() {
                 }.joinToString("\n"),
             )
             .apply()
-    }
-
-    fun tournamentLabel(id: Int): String =
-        selectedTournamentNames[id]
-            ?: tournaments.find { it.id == id }?.name
-            ?: "Giải #$id"
-
-    // Camera selection
-    var backCameras by remember { mutableStateOf<List<CameraInfo>>(emptyList()) }
-    var selectedCameraId by remember { mutableStateOf("0") }
-    var selectedQuality by remember { mutableStateOf(StreamQuality.Q_720P) }
-    var supportedQualities by remember { mutableStateOf<List<StreamQuality>>(emptyList()) }
-    
-    LaunchedEffect(Unit) {
-        backCameras = StreamManager.getBackCameras(context)
-        if (backCameras.isNotEmpty()) selectedCameraId = backCameras.first().id
-        supportedQualities = StreamQuality.getSupportedQualities(context)
-        selectedQuality = StreamQuality.preferredDefault(supportedQualities)
     }
 
     // Step 3: Poll court matches, auto-launch when a match starts playing.
@@ -365,8 +391,10 @@ fun VideoApp() {
                             error = null
                             try {
                                 fetchTournaments(page = 1, query = tournamentSearch, append = false)
+                            } catch (e: CancellationException) {
+                                throw e
                             } catch (e: Exception) {
-                                error = "Lỗi tìm kiếm: ${e.message}"
+                                error = friendlyNetworkError(e)
                                 tournaments = emptyList()
                                 tournamentTotal = 0
                             }
@@ -425,8 +453,10 @@ fun VideoApp() {
                                                         query = tournamentSearch,
                                                         append = true,
                                                     )
+                                                } catch (e: CancellationException) {
+                                                    throw e
                                                 } catch (e: Exception) {
-                                                    error = "Không tải thêm được: ${e.message}"
+                                                    error = "Không tải thêm được: ${friendlyNetworkError(e)}"
                                                 }
                                                 tournamentsLoadingMore = false
                                             }
@@ -445,12 +475,40 @@ fun VideoApp() {
                         }
                         if (selectedTournaments.isNotEmpty()) {
                             Text(
-                                "Đã chọn ${selectedTournaments.size} giải:\n" +
-                                    selectedTournaments.sorted().joinToString("\n") { "• ${tournamentLabel(it)}" },
+                                "Đã chọn ${selectedTournaments.size} · bấm để bỏ (kể cả giải không còn trên list)",
                                 fontSize = 12.sp,
                                 color = Color(0xFF16A34A),
                                 fontWeight = FontWeight.Medium,
                             )
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                selectedTournaments.sorted().forEach { id ->
+                                    val onList = tournaments.any { it.id == id }
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth().clickable {
+                                            selectedTournaments = selectedTournaments - id
+                                            selectedTournamentNames = selectedTournamentNames - id
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = CardDefaults.cardColors(containerColor = Color(0xFFDCFCE7)),
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(12.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Text(
+                                                "🏆 ${tournamentLabel(id)}" + if (onList) "" else " · không còn trên list",
+                                                modifier = Modifier.weight(1f),
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Medium,
+                                            )
+                                            Text("✕", color = Color(0xFFDC2626), fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
                         }
                         if (error != null) Text(error!!, color = Color.Red, fontSize = 12.sp)
                         if (loading) CircularProgressIndicator(modifier = Modifier.size(24.dp))
@@ -558,7 +616,11 @@ fun VideoApp() {
                                             )
                                         } catch (_: Exception) {}
                                         step = 2
-                                    } catch (e: Exception) { error = "Lỗi: ${e.message}" }
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        error = friendlyNetworkError(e)
+                                    }
                                     loading = false
                                 }
                             },

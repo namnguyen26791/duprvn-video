@@ -409,11 +409,12 @@ class StreamManager(
             commentary.onMatchUpdate(match)
             currentMatch = match
             overlayDirty = true
+            // Chỉ đánh dấu dirty — overlay loop vẽ. Force setImage ngay dễ đua GL (máy yếu mất overlay 1 nhịp).
         } else {
-            // Firebase emit null → debounce 3s trước khi clear scoreboard
+            // Firebase emit null → debounce lâu hơn trước khi clear (máy yếu hay snapshot rỗng)
             val elapsed = System.currentTimeMillis() - lastMatchReceivedAt
-            if (elapsed < 3000 && currentMatch != null) {
-                android.util.Log.d("PB_OVERLAY", "Firebase null but debouncing (${elapsed}ms < 3000ms), keeping scoreboard")
+            if (elapsed < 8000 && currentMatch != null) {
+                android.util.Log.d("PB_OVERLAY", "Firebase null but debouncing (${elapsed}ms < 8000ms), keeping scoreboard")
                 return
             }
             if (currentMatch != null) {
@@ -423,13 +424,15 @@ class StreamManager(
             currentMatch = null
             overlayDirty = true
         }
-        // Gộp về main handler — tránh race với overlay loop khi trọng tài ấn điểm liên tục
-        handler.removeCallbacks(matchOverlayRefreshRunnable)
-        handler.post(matchOverlayRefreshRunnable)
     }
 
     private val matchOverlayRefreshRunnable = Runnable {
         refreshOverlay(force = true)
+    }
+
+    private val reattachAfterStreamRunnable = Runnable {
+        if (!filterReady) setupFilter()
+        else refreshOverlay(force = true)
     }
 
     /** Gọi khi switch sang trận mới — clear ngay không debounce */
@@ -507,6 +510,37 @@ class StreamManager(
     private var lastOverlayState = "" // track state changes for logging
     private var lastContentKey = ""
     private var overlayDirty = true
+    private var lastSetImageAt = 0L
+    private var pendingGlBitmap: Bitmap? = null
+    private val uploadPendingRunnable = Runnable { flushPendingGlBitmap() }
+
+    private fun recycleQuietly(bmp: Bitmap?) {
+        if (bmp == null || bmp.isRecycled) return
+        try { bmp.recycle() } catch (_: Exception) {}
+    }
+
+    /** Gộp setImage — Pedro recycle bitmap trên GL thread; setImage dồn lúc ấn điểm dễ texture trống. */
+    private fun uploadOverlayToGl(forGl: Bitmap) {
+        val now = System.currentTimeMillis()
+        val gap = now - lastSetImageAt
+        if (gap < 90) {
+            recycleQuietly(pendingGlBitmap)
+            pendingGlBitmap = forGl
+            handler.removeCallbacks(uploadPendingRunnable)
+            handler.postDelayed(uploadPendingRunnable, 90 - gap)
+            return
+        }
+        lastSetImageAt = now
+        imageFilter?.setImage(forGl)
+    }
+
+    private fun flushPendingGlBitmap() {
+        val bmp = pendingGlBitmap ?: return
+        pendingGlBitmap = null
+        if (bmp.isRecycled) return
+        lastSetImageAt = System.currentTimeMillis()
+        imageFilter?.setImage(bmp)
+    }
 
     private fun matchContentKey(m: MatchState?): String {
         if (m == null) return "logos_only"
@@ -616,7 +650,7 @@ class StreamManager(
                     overlayDirty = true
                     return
                 }
-                imageFilter?.setImage(forGl)
+                uploadOverlayToGl(forGl)
                 lastContentKey = contentKey
                 overlayDirty = false
             } catch (e: Exception) {
@@ -644,13 +678,10 @@ class StreamManager(
             actualQuality = quality
             camera.startStream(fullUrl)
             onStatusChange("🔴 Đang stream ${quality.label}...")
-            // startStream có thể drop filter — gắn lại 1 lần rồi refresh (tránh nháy nhiều lần)
-            forceReattachFilter()
-            handler.postDelayed({ ensureOverlayVisible() }, 300)
-            handler.postDelayed({
-                if (!filterReady) forceReattachFilter()
-                else refreshOverlay(force = true)
-            }, 1200)
+            // startStream hay drop filter — chỉ gắn lại 1 lần (setFilter nhiều lần = nháy overlay)
+            filterReady = false
+            handler.removeCallbacks(reattachAfterStreamRunnable)
+            handler.postDelayed(reattachAfterStreamRunnable, 400)
             startOverlayLoop()
             true
         } catch (e: Exception) {
@@ -754,11 +785,8 @@ class StreamManager(
             return
         }
 
-        // Setup filter after preview starts (GL context ready)
-        handler.postDelayed({
-            setupFilter() // đã vẽ overlay ngay trong setupFilter
-            if (overlayRunnable == null) startOverlayLoop()
-        }, 1000)
+        handler.removeCallbacks(previewAttachRunnable)
+        handler.postDelayed(previewAttachRunnable, 1000)
     }
 
     /**
@@ -781,9 +809,26 @@ class StreamManager(
 
     private var overlayFrameCount = 0L
 
+    private val previewAttachRunnable = Runnable {
+        if (released) return@Runnable
+        setupFilter()
+        if (overlayRunnable == null) startOverlayLoop()
+    }
+
+    private val reconnectRunnable = Runnable {
+        if (released) return@Runnable
+        if (rtmpCamera?.isStreaming == false && lastRtmpUrl != null) {
+            android.util.Log.w("PB_STREAM", "Auto-reconnecting after disconnect...")
+            rtmpCamera?.reTry(5000, "disconnect")
+        }
+    }
+
     private fun startOverlayLoop() {
+        if (released) return
+        stopOverlayLoop()
         overlayRunnable = object : Runnable {
             override fun run() {
+                if (released) return
                 if (!filterReady) {
                     setupFilter()
                 }
@@ -850,6 +895,13 @@ class StreamManager(
         lastContentKey = ""
         overlayDirty = true
         handler.removeCallbacks(matchOverlayRefreshRunnable)
+        handler.removeCallbacks(reattachAfterStreamRunnable)
+        handler.removeCallbacks(uploadPendingRunnable)
+        handler.removeCallbacks(previewAttachRunnable)
+        handler.removeCallbacks(reconnectRunnable)
+        recycleQuietly(pendingGlBitmap)
+        pendingGlBitmap = null
+        lastRtmpUrl = null
     }
 
     override fun onConnectionStartedRtmp(rtmpUrl: String) {
@@ -862,9 +914,7 @@ class StreamManager(
         connectionFailCount = 0
         val q = actualQuality ?: selectedQuality
         onStatusChange("🔴 LIVE ${q.label}")
-        // Force re-setup GL filter after reconnect (old filter may be invalid)
-        handler.post { forceReattachFilter() }
-        handler.postDelayed({ ensureOverlayVisible() }, 400)
+        handler.post { ensureOverlayVisible() }
         // Ensure overlay loop is running after reconnect
         if (overlayRunnable == null) {
             handler.post { startOverlayLoop() }
@@ -894,10 +944,11 @@ class StreamManager(
         } else {
             (targetBitrate * 0.3).toLong().coerceAtLeast(1000L * 1024)
         }
-        val weakThreshold = if (isHighRes) 0.45 else 0.6
-        val weakNeedCount = if (isHighRes) LOW_BITRATE_THRESHOLD + 2 else LOW_BITRATE_THRESHOLD
+        // So với target (không phải bitrate đã hạ) + ngưỡng thấp hơn → ít báo sai khi encoder dao động
+        val weakThreshold = if (isHighRes) 0.35 else 0.4
+        val weakNeedCount = if (isHighRes) LOW_BITRATE_THRESHOLD + 4 else LOW_BITRATE_THRESHOLD + 3
 
-        if (bitrate < currentBitrate * weakThreshold) {
+        if (bitrate < targetBitrate * weakThreshold) {
             lowBitrateCount++
             highBitrateCount = 0
             if (lowBitrateCount >= weakNeedCount) {
@@ -906,21 +957,25 @@ class StreamManager(
                 if (newBitrate < currentBitrate) {
                     rtmpCamera?.setVideoBitrateOnFly(newBitrate.toInt())
                     val mbps = String.format("%.1f", newBitrate.toFloat() / 1024 / 1024)
-                    android.util.Log.w("PB_STREAM", "⚠️ WEAK NETWORK: bitrate ${bitrate/1024}kbps < threshold, reducing to ${newBitrate/1024}kbps (${mbps}Mbps)")
-                    onStatusChange("⚠️ Mạng yếu → ${mbps}Mbps")
+                    // Chỉ log — không đổi status UI (ABR ≠ mất live / mạng chết)
+                    android.util.Log.w(
+                        "PB_STREAM",
+                        "ABR down: measured ${bitrate / 1024}kbps → ${newBitrate / 1024}kbps (${mbps}Mbps)",
+                    )
                 }
             }
         } else if (bitrate > currentBitrate * 0.9 && currentBitrate < targetBitrate) {
-            // Mạng ổn — tăng bitrate 20% (không vượt target)
+            // Mạng ổn — tăng bitrate 20% (không vượt target); không spam status
             highBitrateCount++
             lowBitrateCount = 0
             if (highBitrateCount >= HIGH_BITRATE_THRESHOLD) {
                 highBitrateCount = 0
                 val newBitrate = (currentBitrate * 1.2).toLong().coerceAtMost(targetBitrate)
                 rtmpCamera?.setVideoBitrateOnFly(newBitrate.toInt())
-                val mbps = String.format("%.1f", newBitrate.toFloat() / 1024 / 1024)
-                android.util.Log.d("PB_STREAM", "↑ Network OK: increasing to ${newBitrate/1024}kbps (${mbps}Mbps)")
-                onStatusChange("🔴 ${q.label} ${mbps}Mbps")
+                android.util.Log.d(
+                    "PB_STREAM",
+                    "ABR up: → ${newBitrate / 1024}kbps",
+                )
             }
         } else {
             lowBitrateCount = 0
@@ -930,14 +985,13 @@ class StreamManager(
     override fun onDisconnectRtmp() {
         android.util.Log.e("PB_STREAM", "⚠️ DISCONNECTED! isStreaming=${rtmpCamera?.isStreaming}, will retry in 5s")
         android.util.Log.e("PB_STREAM", "  → filterReady=$filterReady, overlayRunning=${overlayRunnable != null}, match=${currentMatch != null}")
-        onStatusChange("⚠️ Mất kết nối — đang thử kết nối lại...")
-        // Auto-reconnect after 5 seconds
-        handler.postDelayed({
-            if (rtmpCamera?.isStreaming == false && lastRtmpUrl != null) {
-                android.util.Log.w("PB_STREAM", "Auto-reconnecting after disconnect...")
-                rtmpCamera?.reTry(5000, "disconnect")
-            }
-        }, 5000)
+        // Chỉ báo mất kết nối khi RTMP thật sự không còn streaming
+        if (rtmpCamera?.isStreaming != true) {
+            onStatusChange("⚠️ Mất kết nối YouTube — đang thử lại...")
+        }
+        if (released) return
+        handler.removeCallbacks(reconnectRunnable)
+        handler.postDelayed(reconnectRunnable, 5000)
     }
     override fun onAuthErrorRtmp() { android.util.Log.e("PB_STREAM", "Auth error!"); onStatusChange("❌ Auth error") }
     override fun onAuthSuccessRtmp() { android.util.Log.i("PB_STREAM", "Auth success") }

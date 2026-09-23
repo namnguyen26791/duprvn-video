@@ -1,6 +1,7 @@
 package vn.vdpr.video
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.WindowManager
@@ -20,6 +21,16 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        // Thoát app / process chết → luôn về màn chọn chất lượng, không khôi phục step cũ
+        getSharedPreferences("video_app", Context.MODE_PRIVATE)
+            .edit()
+            .putInt("step", 0)
+            .remove("auto_launched")
+            .remove("tids")
+            .remove("tid_names")
+            .remove("court")
+            .apply()
 
         val permissionLauncher = registerForActivityResult(
             ActivityResultContracts.RequestMultiplePermissions()

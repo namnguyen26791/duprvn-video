@@ -125,8 +125,10 @@ class StreamActivity : AppCompatActivity() {
         streamManager?.selectedQuality = quality
         streamManager?.init(courtName, cameraId)
         streamManager?.restoreOverlayFlags(expectedTids)
-        // force=true: luôn tải lại logo từ API theo giải đang chọn (tránh dính trên+dưới giải cũ)
-        streamManager?.loadOverlayConfig(apiBase, tournamentId, expectedTids, force = true)
+        // Đã có logo đúng giải → không force API (tránh clear/swap = nháy overlay khi vào lại)
+        val logosReady = vn.vdpr.video.overlay.ScoreboardOverlay.hasCornerLogos() &&
+            (expectedTids.isEmpty() || vn.vdpr.video.overlay.ScoreboardOverlay.loadedTournamentIds == expectedTids)
+        streamManager?.loadOverlayConfig(apiBase, tournamentId, expectedTids, force = !logosReady)
 
         openGlView.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
@@ -278,9 +280,12 @@ class StreamActivity : AppCompatActivity() {
                             }
                         }
                     } catch (e: Exception) {
+                        // API VDPR lỗi ≠ mất RTMP/YouTube. Đừng ghi đè status khi vẫn đang live.
                         android.util.Log.e("PB_VIDEO", "configCheck failed: ${e.message}")
-                        runOnUiThread {
-                            statusText.text = "⚠️ Mất kết nối..."
+                        if (streamManager?.isStreaming() != true) {
+                            runOnUiThread {
+                                statusText.text = "⚠️ Không gọi được API — đang thử lại..."
+                            }
                         }
                     }
                 }
