@@ -79,6 +79,8 @@ class StreamActivity : AppCompatActivity() {
             WindowManager.LayoutParams.FLAG_FULLSCREEN,
             WindowManager.LayoutParams.FLAG_FULLSCREEN
         )
+        // Giảm độ sáng màn khi live — giảm nhiệt backlight, không ảnh hưởng encode
+        applyLiveBrightness(dim = true)
 
         matchId = intent.getIntExtra("match_id", 0)
         matchType = intent.getStringExtra("match_type") ?: "bracket"
@@ -404,7 +406,15 @@ class StreamActivity : AppCompatActivity() {
         // Giữ logo đang có trong RAM; StreamManager.loadOverlayConfig sẽ swap khi API có data
     }
 
+    /** ~5% khi live; -1 = theo hệ thống khi thoát. */
+    private fun applyLiveBrightness(dim: Boolean) {
+        val lp = window.attributes
+        lp.screenBrightness = if (dim) 0.05f else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        window.attributes = lp
+    }
+
     override fun onDestroy() {
+        applyLiveBrightness(dim = false)
         super.onDestroy()
         configCheckRunnable?.let { handler.removeCallbacks(it) }
         batteryRunnable?.let { handler.removeCallbacks(it) }
