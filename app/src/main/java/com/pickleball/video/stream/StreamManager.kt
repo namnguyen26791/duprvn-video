@@ -926,8 +926,11 @@ class StreamManager(
         connectionFailCount++
         android.util.Log.e("PB_STREAM", "❌ Connection FAILED ($connectionFailCount): $reason")
         android.util.Log.e("PB_STREAM", "  → isStreaming=${rtmpCamera?.isStreaming}, lastUrl=${lastRtmpUrl?.take(50)}")
-        if (connectionFailCount >= 5) {
-            onStatusChange("❌ Không thể kết nối YouTube. Cần tạo broadcast mới từ Manager.")
+        if (connectionFailCount >= 20) {
+            onStatusChange("⚠️ Mất YouTube lâu — đang giữ broadcast, tiếp tục thử lại...")
+            // Không yêu cầu tạo broadcast mới — cùng key vẫn reconnect được khi mạng về
+            connectionFailCount = 10 // cho phép tiếp tục retry
+            handler.postDelayed({ rtmpCamera?.reTry(8000, reason) }, 8000)
         } else {
             onStatusChange("❌ Mất kết nối (lần $connectionFailCount) — thử lại...")
             handler.postDelayed({ rtmpCamera?.reTry(5000, reason) }, 5000)

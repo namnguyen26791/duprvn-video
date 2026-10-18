@@ -30,6 +30,7 @@ import vn.vdpr.video.stream.StreamManager
 import vn.vdpr.video.stream.StreamQuality
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.net.ConnectException
 import java.net.SocketTimeoutException
@@ -170,68 +171,113 @@ fun VideoApp() {
             .apply()
     }
 
-    // Step 3: Poll court matches, auto-launch when a match starts playing.
-    // Chỉ launch khi MainActivity RESUMED — tránh start khi StreamActivity đang mở / recreate.
-    LaunchedEffect(step, selectedCourt, mainResumed) {
+    // Step 3: Listen Firebase court node (fallback poll BE thưa nếu RTDB trống)
+    LaunchedEffect(step, selectedCourt, mainResumed, selectedTournaments) {
         if (step != 3 || selectedCourt == null || !mainResumed) return@LaunchedEffect
         val court = selectedCourt ?: return@LaunchedEffect
         val tids = selectedTournaments.toList()
         if (tids.isEmpty()) return@LaunchedEffect
 
-        // Load tournaments list if empty (resuming from saved state)
         if (tournaments.isEmpty()) {
             try { fetchTournaments(page = 1, query = "", append = false) } catch (_: Exception) {}
         }
 
+        // Firebase realtime — nguồn chính
+        val firebaseJob = launch {
+            FirebasePubListener.observeCourts(tids, court).collectLatest { pairs ->
+                val withTid = pairs.map { (tid, sig) ->
+                    CourtMatchItem(
+                        id = sig.matchId,
+                        match_type = sig.matchType,
+                        match_order = null,
+                        team1 = sig.team1 ?: "TBD",
+                        team2 = sig.team2 ?: "TBD",
+                        status = sig.status ?: "pending",
+                        rtmp_url = sig.rtmpUrl,
+                        stream_key = sig.streamKey,
+                        youtube_video_id = sig.youtubeVideoId,
+                        broadcast_id = sig.broadcastId,
+                        stream_started_at = sig.streamStartedAt,
+                        stream_ended_at = sig.streamEndedAt,
+                        tournamentName = tournamentLabel(tid),
+                        tournament_id = tid,
+                    )
+                }
+                if (withTid.isNotEmpty()) {
+                    courtMatches = withTid
+                    val playing = withTid.firstOrNull {
+                        !it.stream_started_at.isNullOrBlank() &&
+                            it.stream_ended_at.isNullOrBlank() &&
+                            !it.rtmp_url.isNullOrBlank()
+                    }
+                    if (playing == null) {
+                        if (autoLaunched != null) setAutoLaunched(null)
+                    } else {
+                        val launchKey = "${playing.id}:${playing.broadcast_id ?: playing.rtmp_url ?: "none"}"
+                        if (autoLaunched != launchKey && !playing.rtmp_url.isNullOrBlank()) {
+                            setAutoLaunched(launchKey)
+                            val intent = Intent(context, StreamActivity::class.java).apply {
+                                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                                putExtra("match_id", playing.id)
+                                putExtra("match_type", playing.match_type)
+                                putExtra("api_base", apiBase)
+                                putExtra("tournament_id", playing.tournament_id ?: tids.first())
+                                putExtra("court_name", court)
+                                putExtra("camera_id", selectedCameraId)
+                                putExtra("stream_quality", selectedQuality.name)
+                            }
+                            context.startActivity(intent)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback BE mỗi 20s nếu chưa có signal Firebase
         while (step == 3 && mainResumed) {
             try {
-                // Merge court matches from all selected tournaments
-                val allMatches = mutableListOf<CourtMatchItem>()
-                for (tid in tids) {
-                    try {
-                        val tName = tournaments.find { it.id == tid }?.name ?: ""
-                        val m = ApiService.create(apiBase).getCourtMatches(tid, court)
-                        m.forEach {
-                            it.tournamentName = tName
-                            it.tournament_id = tid
+                if (courtMatches.isEmpty()) {
+                    val allMatches = mutableListOf<CourtMatchItem>()
+                    for (tid in tids) {
+                        try {
+                            val tName = tournamentLabel(tid)
+                            val m = ApiService.create(apiBase).getCourtMatches(tid, court)
+                            m.forEach {
+                                it.tournamentName = tName
+                                it.tournament_id = tid
+                            }
+                            allMatches.addAll(m)
+                        } catch (_: Exception) {}
+                    }
+                    if (allMatches.isNotEmpty()) {
+                        courtMatches = allMatches
+                        val playing = allMatches.firstOrNull {
+                            !it.stream_started_at.isNullOrBlank() &&
+                                it.stream_ended_at.isNullOrBlank() &&
+                                !it.rtmp_url.isNullOrBlank()
                         }
-                        allMatches.addAll(m)
-                    } catch (_: Exception) {}
-                }
-                courtMatches = allMatches
-
-                // Auto-launch: find match that is live (stream_started_at set, not ended, has rtmp)
-                val playing = allMatches.firstOrNull {
-                    !it.stream_started_at.isNullOrBlank() &&
-                    it.stream_ended_at.isNullOrBlank() &&
-                    !it.rtmp_url.isNullOrBlank()
-                }
-                if (playing == null) {
-                    // Hết live → cho phép auto-launch trận/broadcast tiếp theo
-                    if (autoLaunched != null) setAutoLaunched(null)
-                } else {
-                    // Track bằng "matchId:broadcastId" — tạo broadcast mới → launchKey đổi → vào lại
-                    val launchKey = "${playing.id}:${playing.broadcast_id ?: playing.rtmp_url ?: "none"}"
-                    if (autoLaunched != launchKey && !playing.rtmp_url.isNullOrBlank()) {
-                        setAutoLaunched(launchKey)
-                        val tidForStream = playing.tournament_id
-                            ?: if (selectedTournaments.size == 1) selectedTournaments.first() else 0
-                        val intent = Intent(context, StreamActivity::class.java).apply {
-                            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                            putExtra("match_id", playing.id)
-                            putExtra("match_type", playing.match_type)
-                            putExtra("api_base", apiBase)
-                            putExtra("tournament_id", tidForStream)
-                            putExtra("court_name", court)
-                            putExtra("camera_id", selectedCameraId)
-                            putExtra("stream_quality", selectedQuality.name)
+                        if (playing != null) {
+                            val launchKey = "${playing.id}:${playing.broadcast_id ?: playing.rtmp_url ?: "none"}"
+                            if (autoLaunched != launchKey) {
+                                setAutoLaunched(launchKey)
+                                context.startActivity(Intent(context, StreamActivity::class.java).apply {
+                                    flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                                    putExtra("match_id", playing.id)
+                                    putExtra("match_type", playing.match_type)
+                                    putExtra("api_base", apiBase)
+                                    putExtra("tournament_id", playing.tournament_id ?: tids.first())
+                                    putExtra("court_name", court)
+                                    putExtra("camera_id", selectedCameraId)
+                                    putExtra("stream_quality", selectedQuality.name)
+                                })
+                            }
                         }
-                        context.startActivity(intent)
                     }
                 }
             } catch (_: Exception) {}
-            delay(5000)
+            delay(20000)
         }
+        firebaseJob.cancel()
     }
 
     val configuration = LocalConfiguration.current

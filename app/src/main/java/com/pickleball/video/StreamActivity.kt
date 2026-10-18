@@ -157,6 +157,105 @@ class StreamActivity : AppCompatActivity() {
                 streamManager?.updateMatch(match)
             }
         }
+
+        // RTMP từ Firebase court node — không phụ thuộc poll BE khi mạng yếu
+        if (tournamentId > 0 && courtName.isNotBlank()) {
+            lifecycleScope.launch {
+                vn.vdpr.video.data.FirebasePubListener.observeCourt(tournamentId, courtName).collectLatest { sig ->
+                    if (sig == null) return@collectLatest
+                    if (sig.matchId > 0 && sig.matchId != matchId) {
+                        // Sân đã chuyển trận khác — thoát để MainActivity auto-launch lại
+                        if (!sig.streamEndedAt.isNullOrBlank() || !sig.streamReady) return@collectLatest
+                    }
+                    applyStreamMeta(tournamentId, sig.court)
+                    if (!sig.streamEndedAt.isNullOrBlank() && sig.matchId == matchId) {
+                        streamEndedConfirmCount++
+                        if (streamEndedConfirmCount >= 2) {
+                            runOnUiThread {
+                                stopKeepAlive()
+                                streamManager?.release()
+                                setResult(RESULT_OK)
+                                finish()
+                            }
+                        }
+                        return@collectLatest
+                    }
+                    streamEndedConfirmCount = 0
+                    val rtmp = sig.rtmpUrl
+                    val key = sig.streamKey
+                    if (sig.streamReady && !rtmp.isNullOrBlank() && !key.isNullOrBlank()) {
+                        persistLiveSession(rtmp, key, sig.broadcastId)
+                        ensureStreaming(rtmp, key)
+                    }
+                }
+            }
+        }
+
+        // Resume từ prefs nếu vừa mất mạng / vào lại app
+        restoreLiveSessionIfAny()
+    }
+
+    private fun persistLiveSession(rtmp: String, key: String, broadcastId: String?) {
+        getSharedPreferences("video_live", MODE_PRIVATE).edit()
+            .putInt("match_id", matchId)
+            .putString("match_type", matchType)
+            .putInt("tournament_id", tournamentId)
+            .putString("court", courtName)
+            .putString("rtmp", rtmp)
+            .putString("stream_key", key)
+            .putString("broadcast_id", broadcastId)
+            .apply()
+    }
+
+    private fun clearLiveSession() {
+        getSharedPreferences("video_live", MODE_PRIVATE).edit().clear().apply()
+    }
+
+    private fun restoreLiveSessionIfAny() {
+        val p = getSharedPreferences("video_live", MODE_PRIVATE)
+        val savedMatch = p.getInt("match_id", 0)
+        if (savedMatch != matchId) return
+        val rtmp = p.getString("rtmp", null) ?: return
+        val key = p.getString("stream_key", null) ?: return
+        lifecycleScope.launch(Dispatchers.Main) {
+            ensureStreaming(rtmp, key)
+        }
+    }
+
+    private suspend fun ensureStreaming(rtmp: String, key: String) {
+        val urlChanged = isStreaming && (rtmp != lastRtmpUrl || key != lastStreamKey)
+        if (urlChanged) {
+            isStreaming = false
+            withContext(Dispatchers.Main) {
+                stopKeepAlive()
+                streamManager?.stopStream()
+            }
+        }
+        if (!isStreaming) {
+            isStreaming = true
+            lastRtmpUrl = rtmp
+            lastStreamKey = key
+            val started = withContext(Dispatchers.Main) {
+                startKeepAlive()
+                streamManager?.startStream(rtmp, key) == true
+            }
+            if (!started) {
+                isStreaming = false
+                withContext(Dispatchers.Main) { stopKeepAlive() }
+            } else {
+                reportBatteryNow()
+                try {
+                    ApiService.create(apiBase).streamConfirmed(
+                        StreamConfirmedRequest(
+                            match_id = matchId,
+                            match_type = matchType,
+                            tournament_id = tournamentId,
+                            court_name = courtName,
+                        )
+                    )
+                } catch (_: Exception) {}
+            }
+        }
     }
 
     private var streamEndedConfirmCount = 0
@@ -198,6 +297,7 @@ class StreamActivity : AppCompatActivity() {
     }
 
     private fun startConfigCheck() {
+        // BE chỉ là fallback thưa — Firebase court là nguồn chính khi đang live
         configCheckRunnable = object : Runnable {
             override fun run() {
                 lifecycleScope.launch {
@@ -206,17 +306,13 @@ class StreamActivity : AppCompatActivity() {
                         val config = api.getMatchStreamConfig(matchId, matchType)
                         applyStreamMeta(config.tournament_id, config.court)
 
-                        // Hết live: stream_ended_at có giá trị, HOẶC reset trận (mất stream_started_at / RTMP)
                         val stillLive = !config.stream_started_at.isNullOrBlank() &&
                             config.stream_ended_at.isNullOrBlank()
                         val hasRtmp = !config.rtmp_url.isNullOrBlank() && !config.stream_key.isNullOrBlank()
-                        if (!stillLive || (!hasRtmp && isStreaming)) {
+                        if (!stillLive) {
                             streamEndedConfirmCount++
-                            if (streamEndedConfirmCount >= 2) {
-                                android.util.Log.w(
-                                    "PB_VIDEO",
-                                    "configCheck: end live stillLive=$stillLive hasRtmp=$hasRtmp ended='${config.stream_ended_at}' → finishing",
-                                )
+                            if (streamEndedConfirmCount >= 3) {
+                                clearLiveSession()
                                 runOnUiThread {
                                     stopKeepAlive()
                                     streamManager?.release()
@@ -232,64 +328,23 @@ class StreamActivity : AppCompatActivity() {
                         val rtmp = config.rtmp_url
                         val key = config.stream_key
                         if (!rtmp.isNullOrBlank() && !key.isNullOrBlank() && stillLive) {
-                            val urlChanged = isStreaming && (rtmp != lastRtmpUrl || key != lastStreamKey)
-                            if (urlChanged) {
-                                android.util.Log.w("PB_VIDEO", "configCheck: RTMP/key changed → restart stream")
-                                isStreaming = false
-                                withContext(Dispatchers.Main) {
-                                    stopKeepAlive()
-                                    streamManager?.stopStream()
-                                }
-                            }
-                            if (!isStreaming) {
-                                isStreaming = true
-                                lastRtmpUrl = rtmp
-                                lastStreamKey = key
-                                val started = withContext(Dispatchers.Main) {
-                                    startKeepAlive()
-                                    streamManager?.startStream(rtmp, key) == true
-                                }
-                                if (!started) {
-                                    isStreaming = false
-                                    withContext(Dispatchers.Main) { stopKeepAlive() }
-                                } else {
-                                    reportBatteryNow()
-                                    try {
-                                        api.streamConfirmed(StreamConfirmedRequest(
-                                            match_id = matchId,
-                                            match_type = matchType,
-                                            tournament_id = tournamentId,
-                                            court_name = courtName,
-                                        ))
-                                    } catch (_: Exception) {}
-                                }
-                            }
-                        } else if (!hasRtmp) {
-                            // Reset broadcast / chưa có key → chờ cấu hình mới
-                            if (isStreaming) {
-                                isStreaming = false
-                                lastRtmpUrl = null
-                                lastStreamKey = null
-                                runOnUiThread {
-                                    stopKeepAlive()
-                                    streamManager?.stopStream()
-                                }
-                            }
-                            runOnUiThread {
-                                statusText.text = "Đang chờ cấu hình..."
-                            }
+                            persistLiveSession(rtmp, key, null)
+                            ensureStreaming(rtmp, key)
                         }
                     } catch (e: Exception) {
-                        // API VDPR lỗi ≠ mất RTMP/YouTube. Đừng ghi đè status khi vẫn đang live.
                         android.util.Log.e("PB_VIDEO", "configCheck failed: ${e.message}")
+                        // Mất API ≠ hết live — giữ RTMP local / Firebase reconnect
                         if (streamManager?.isStreaming() != true) {
+                            restoreLiveSessionIfAny()
                             runOnUiThread {
-                                statusText.text = "⚠️ Không gọi được API — đang thử lại..."
+                                if (streamManager?.isStreaming() != true) {
+                                    statusText.text = "⚠️ Mạng yếu — giữ broadcast, đang thử lại..."
+                                }
                             }
                         }
                     }
                 }
-                handler.postDelayed(this, 5000) // poll every 5s
+                handler.postDelayed(this, 15000)
             }
         }
         handler.post(configCheckRunnable!!)
